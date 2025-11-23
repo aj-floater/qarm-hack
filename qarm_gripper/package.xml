@@ -1,0 +1,19 @@
+<package format="2">
+  <name>qarm_gripper</name>
+  <version>1.0.0</version>
+  <description>
+    URDF Description package for Quanser's QArm Gripper
+  </description>
+  <author>Quanser</author>
+  <maintainer email="tech@quanser.com" />
+  <license>BSD</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>roslaunch</depend>
+  <depend>robot_state_publisher</depend>
+  <depend>rviz</depend>
+  <depend>joint_state_publisher_gui</depend>
+  <depend>gazebo</depend>
+  <export>
+    <architecture_independent />
+  </export>
+</package>

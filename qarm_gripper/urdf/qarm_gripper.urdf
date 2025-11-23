@@ -1,0 +1,275 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot  name="qarm_gripper">
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="0.00012116 0.029671 -0.014086"
+        rpy="0 0 0" />
+      <mass
+        value="0.32859" />
+      <inertia
+        ixx="5.7665E-05"
+        ixy="8.7777E-08"
+        ixz="-2.8882E-08"
+        iyy="6.2673E-05"
+        iyz="9.1554E-07"
+        izz="9.0909E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://qarm_gripper/meshes/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://qarm_gripper/meshes/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="Link1A">
+    <inertial>
+      <origin
+        xyz="-0.00045578 0.040818 -0.016985"
+        rpy="0 0 0" />
+      <mass
+        value="0.075987" />
+      <inertia
+        ixx="2.0947E-05"
+        ixy="-7.5077E-07"
+        ixz="-1.7143E-11"
+        iyy="3.271E-06"
+        iyz="6.1893E-10"
+        izz="2.1417E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://qarm_gripper/meshes/Link1A.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.75294 0.75294 0.75294 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://qarm_gripper/meshes/Link1A.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint1A"
+    type="revolute">
+    <origin
+      xyz="-0.03075 0.0345 0.016987"
+      rpy="0 0 0.59622" />
+    <parent
+      link="base_link" />
+    <child
+      link="Link1A" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="Link2A">
+    <inertial>
+      <origin
+        xyz="-0.00490949469440891 0.0156109780240097 -0.0201804633588216"
+        rpy="0 0 0" />
+      <mass
+        value="0.0291073155718739" />
+      <inertia
+        ixx="5.71066984240005E-06"
+        ixy="-3.98906405487063E-07"
+        ixz="-1.34892678516972E-13"
+        iyy="1.04097610793045E-06"
+        iyz="-2.15540332491295E-14"
+        izz="6.34957489076701E-06" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://qarm_gripper/meshes/Link2A.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://qarm_gripper/meshes/Link2A.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint2A"
+    type="revolute">
+    <origin
+      xyz="0 0.07 0"
+      rpy="0 0 -0.094813" />
+    <parent
+      link="Link1A" />
+    <child
+      link="Link2A" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="Link1B">
+    <inertial>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <mass
+        value="0" />
+      <inertia
+        ixx="0"
+        ixy="0"
+        ixz="0"
+        iyy="0"
+        iyz="0"
+        izz="0" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://qarm_gripper/meshes/Link1B.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://qarm_gripper/meshes/Link1B.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint1B"
+    type="revolute">
+    <origin
+      xyz="0.03075 0.0345 0.016987"
+      rpy="0 0 -0.58368" />
+    <parent
+      link="base_link" />
+    <child
+      link="Link1B" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="Link2B">
+    <inertial>
+      <origin
+        xyz="0.00490949472539796 0.0156109776368603 -0.0137927365250999"
+        rpy="0 0 0" />
+      <mass
+        value="0.0291073142953973" />
+      <inertia
+        ixx="5.71066976947419E-06"
+        ixy="3.98906419860701E-07"
+        ixz="-1.33762552422126E-13"
+        iyy="1.0409760858344E-06"
+        iyz="1.95446349721206E-14"
+        izz="6.34957480487405E-06" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://qarm_gripper/meshes/Link2B.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://qarm_gripper/meshes/Link2B.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint2B"
+    type="revolute">
+    <origin
+      xyz="0 0.07 0"
+      rpy="0 0 0.055781" />
+    <parent
+      link="Link1B" />
+    <child
+      link="Link2B" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="0"
+      velocity="0" />
+  </joint>
+</robot>

@@ -1,0 +1,14 @@
+[project]
+name = "qarm-hackathon"
+version = "0.1.0"
+description = "Hackathon starter framework for controlling the Quanser QArm in simulation and on hardware."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pybullet",
+    "numpy",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
