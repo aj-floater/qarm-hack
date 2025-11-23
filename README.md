@@ -20,3 +20,27 @@ Next steps (to be done by a human):
 - Connect `SimQArm` to the PyBullet simulation.
 - Connect `RealQArm` to the physical QArm via the Quanser Python SDK.
 - Build student-facing templates and milestone scripts on top of `QArmBase`.
+
+## Local setup (for devs and students)
+
+```bash
+cd /Users/archiejames/coding/qarm-hack      # or clone destination
+python3 -m venv .venv
+source .venv/bin/activate                   # Windows: .venv\Scripts\activate
+pip install --upgrade pip
+pip install -e .                            # installs pybullet + numpy
+```
+
+- On macOS, you may need Xcode Command Line Tools once: `xcode-select --install`.
+- PyBullet builds a native wheel; it can take a minute on first install.
+
+Quick smoke test (no GUI):
+```bash
+python - <<'PY'
+import pybullet as p
+cid = p.connect(p.DIRECT)
+robot = p.loadURDF("qarm/urdf/QARM.urdf")
+print("client:", cid, "robot:", robot)
+p.disconnect()
+PY
+```

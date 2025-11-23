@@ -12,3 +12,21 @@ dependencies = [
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = [
+    "common",
+    "common.*",
+    "sim",
+    "sim.*",
+    "hardware",
+    "hardware.*",
+    "examples",
+    "examples.*",
+]
+exclude = [
+    "qarm",
+    "qarm.*",
+    "qarm_gripper",
+    "qarm_gripper.*",
+]
