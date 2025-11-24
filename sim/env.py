@@ -1,32 +1,233 @@
 """
-Placeholder for the PyBullet environment that will host the QArm simulation.
+Lightweight PyBullet environment wrapper for the QArm simulation.
 
-Future work should:
-- start a PyBullet physics client (GUI or DIRECT),
-- load the URDF from the qarm/ directory,
-- expose body and joint identifiers for SimQArm,
-- provide helper methods for resetting, stepping, and rendering.
+This sets up a physics client, loads the URDF, captures joint metadata, and
+offers helpers for stepping and basic joint control. Keep the joint ordering
+consistent with the URDF:
+- 0: world_base_joint (fixed, not driven)
+- 1: YAW
+- 2: SHOULDER
+- 3: ELBOW
+- 4: WRIST
 """
 
 from __future__ import annotations
+
+from pathlib import Path
+from typing import Iterable, Sequence
+
+try:
+    import pybullet as p
+except ImportError as exc:  # pragma: no cover - runtime guard
+    raise SystemExit("pybullet is not installed. Run `pip install -e .` first.") from exc
 
 
 class QArmSimEnv:
     """
     Container for PyBullet state and helper utilities.
 
-    Replace the stubbed constructor and methods with real PyBullet wiring once
-    the simulation loop is implemented.
+    Minimal responsibilities:
+    - start a PyBullet client (GUI or DIRECT),
+    - load the QArm URDF from qarm/urdf,
+    - record joint indices/names and expose controllable joints,
+    - provide reset/step and joint position helpers.
     """
 
-    def __init__(self) -> None:
-        # TODO: connect to PyBullet and load the QArm URDF.
-        raise NotImplementedError("QArmSimEnv to be implemented with PyBullet setup")
+    DARK_LINK_COLOR = (0.15, 0.15, 0.18, 1.0)
+    ACCENT_LINK_COLOR = (0.78, 0.12, 0.12, 1.0)
+    DARK_FLOOR_COLOR = (0.1, 0.1, 0.1, 1.0)
+    LIGHT_FLOOR_COLOR = (0.8, 0.8, 0.8, 1.0)
+    BACKDROP_COLOR = (0.85, 0.85, 0.85, 1.0)
 
-    def step(self) -> None:
-        # TODO: step the physics simulation forward.
-        raise NotImplementedError
+    def __init__(
+        self,
+        gui: bool = False,
+        urdf_path: Path | None = None,
+        time_step: float = 1.0 / 120.0,
+        add_ground: bool = False,
+        real_time: bool = False,
+        dark_mode: bool = True,
+        show_debug_gui: bool = False,
+        show_camera_previews: bool = False,
+        enable_joint_sliders: bool = False,
+    ) -> None:
+        mode = p.GUI if gui else p.DIRECT
+        connect_options = ""
+        if gui and dark_mode:
+            connect_options = (
+                f"--background_color_red={self.BACKDROP_COLOR[0]} "
+                f"--background_color_green={self.BACKDROP_COLOR[1]} "
+                f"--background_color_blue={self.BACKDROP_COLOR[2]}"
+            )
+        self.client = p.connect(mode, options=connect_options)
+        self.time_step = time_step
+        self.real_time = real_time
+        self.gui_enabled = gui
+        self.dark_mode = dark_mode
+        self.show_debug_gui = show_debug_gui
+        self.show_camera_previews = show_camera_previews
+        self.enable_joint_sliders = enable_joint_sliders
+        self._joint_slider_ids: list[int] = []
 
-    def reset(self) -> None:
-        # TODO: reset the simulation and return to a known state.
-        raise NotImplementedError
+        p.setTimeStep(self.time_step, physicsClientId=self.client)
+        p.setGravity(0, 0, -9.81, physicsClientId=self.client)
+        p.setRealTimeSimulation(1 if self.real_time else 0, physicsClientId=self.client)
+
+        if self.gui_enabled:
+            self._configure_gui()
+
+        urdf_path = urdf_path or Path(__file__).resolve().parent.parent / "qarm" / "urdf" / "QARM.urdf"
+        if not urdf_path.exists():
+            raise FileNotFoundError(f"URDF not found at {urdf_path}")
+
+        self.robot_id = p.loadURDF(str(urdf_path), useFixedBase=True, physicsClientId=self.client)
+        if self.dark_mode:
+            self._apply_robot_palette()
+
+        num_joints = p.getNumJoints(self.robot_id, physicsClientId=self.client)
+        self.joint_indices = list(range(num_joints))
+        self.joint_names = [
+            p.getJointInfo(self.robot_id, j, physicsClientId=self.client)[1].decode("utf-8") for j in self.joint_indices
+        ]
+        # Filter out fixed joints for control commands.
+        self.movable_joint_indices = [
+            j
+            for j in self.joint_indices
+            if p.getJointInfo(self.robot_id, j, physicsClientId=self.client)[2] != p.JOINT_FIXED
+        ]
+
+        # Disable default motor torques so we can drive positions explicitly.
+        p.setJointMotorControlArray(
+            self.robot_id,
+            jointIndices=self.movable_joint_indices,
+            controlMode=p.VELOCITY_CONTROL,
+            forces=[0.0] * len(self.movable_joint_indices),
+            physicsClientId=self.client,
+        )
+
+        if self.gui_enabled and self.enable_joint_sliders:
+            self._create_joint_sliders()
+
+    def reset(self, home: Sequence[float] | None = None) -> None:
+        """
+        Reset joints to a home pose (defaults to zeros for movable joints).
+
+        The length of `home` must match the number of movable joints.
+        """
+        target = list(home) if home is not None else [0.0] * len(self.movable_joint_indices)
+        if len(target) != len(self.movable_joint_indices):
+            raise ValueError(f"Home pose length {len(target)} != movable joints {len(self.movable_joint_indices)}")
+        for joint_id, angle in zip(self.movable_joint_indices, target):
+            p.resetJointState(self.robot_id, joint_id, angle, physicsClientId=self.client)
+
+    def step(self, n: int = 1) -> None:
+        """Advance the simulation by n steps (no-op if running in real-time mode)."""
+        if self.real_time:
+            return
+        for _ in range(n):
+            p.stepSimulation(physicsClientId=self.client)
+
+    def set_joint_positions(self, q: Sequence[float], max_force: float = 5.0) -> None:
+        """
+        Drive movable joints to target positions using POSITION_CONTROL.
+
+        `q` must align with `movable_joint_indices` (currently YAW, SHOULDER, ELBOW, WRIST).
+        """
+        if len(q) != len(self.movable_joint_indices):
+            raise ValueError(f"Expected {len(self.movable_joint_indices)} joints, got {len(q)}")
+        p.setJointMotorControlArray(
+            self.robot_id,
+            jointIndices=self.movable_joint_indices,
+            controlMode=p.POSITION_CONTROL,
+            targetPositions=list(q),
+            forces=[max_force] * len(self.movable_joint_indices),
+            physicsClientId=self.client,
+        )
+
+    def get_joint_positions(self, indices: Iterable[int] | None = None) -> list[float]:
+        """
+        Read joint angles (radians) for the requested indices (defaults to movable joints).
+        """
+        selected = list(indices) if indices is not None else self.movable_joint_indices
+        states = p.getJointStates(self.robot_id, selected, physicsClientId=self.client)
+        return [s[0] for s in states]
+
+    def disconnect(self) -> None:
+        """Disconnect the PyBullet client."""
+        if p.isConnected(self.client):
+            p.disconnect(self.client)
+
+    def _configure_gui(self) -> None:
+        """Apply GUI defaults: dark mode and hide camera preview windows."""
+        if not self.show_camera_previews:
+            for flag in (
+                p.COV_ENABLE_RGB_BUFFER_PREVIEW,
+                p.COV_ENABLE_DEPTH_BUFFER_PREVIEW,
+                p.COV_ENABLE_SEGMENTATION_MARK_PREVIEW,
+            ):
+                p.configureDebugVisualizer(flag, 0, physicsClientId=self.client)
+
+        if self.enable_joint_sliders or self.show_debug_gui:
+            p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1, physicsClientId=self.client)
+        elif self.dark_mode:
+            p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0, physicsClientId=self.client)
+
+    def _create_joint_sliders(self) -> None:
+        """Expose joint sliders in the PyBullet GUI for manual manipulation."""
+        self._joint_slider_ids.clear()
+        for idx in self.movable_joint_indices:
+            name = self.joint_names[idx]
+            slider_id = p.addUserDebugParameter(
+                paramName=f"{name} (rad)",
+                rangeMin=-3.14159,
+                rangeMax=3.14159,
+                startValue=0.0,
+            )
+            self._joint_slider_ids.append(slider_id)
+
+    def _create_floor(self, enable_collision: bool) -> int:
+        """Create a translucent base plane to provide spatial reference."""
+        base_collision = (
+            p.createCollisionShape(p.GEOM_BOX, halfExtents=[5, 5, 0.02], physicsClientId=self.client)
+            if enable_collision
+            else -1
+        )
+        base_visual = p.createVisualShape(
+            shapeType=p.GEOM_BOX,
+            halfExtents=[5, 5, 0.002],
+            rgbaColor=(*self.DARK_FLOOR_COLOR[:3], 0.2),
+            specularColor=[0.0, 0.0, 0.0],
+            physicsClientId=self.client,
+        )
+        return p.createMultiBody(
+            baseMass=0.0,
+            baseCollisionShapeIndex=base_collision,
+            baseVisualShapeIndex=base_visual,
+            basePosition=[0.0, 0.0, -0.01],
+            physicsClientId=self.client,
+        )
+
+    def _apply_robot_palette(self) -> None:
+        """Tint the robot to the default dark grey and red colorway."""
+        accent_links = {1, 3}  # YAW and ELBOW joints look good with red highlights.
+        visual_data = p.getVisualShapeData(self.robot_id, physicsClientId=self.client)
+        for shape in visual_data:
+            link_index = shape[1]
+            if link_index in accent_links:
+                color = self.ACCENT_LINK_COLOR
+            else:
+                color = self.DARK_LINK_COLOR
+            p.changeVisualShape(
+                self.robot_id,
+                link_index,
+                rgbaColor=color,
+                specularColor=[0.1, 0.1, 0.1],
+                physicsClientId=self.client,
+            )
+
+    def apply_joint_slider_targets(self) -> None:
+        """Read joint slider values (if enabled) and command the arm accordingly."""
+        if not self._joint_slider_ids:
+            return
+        targets = [p.readUserDebugParameter(slider_id) for slider_id in self._joint_slider_ids]
+        self.set_joint_positions(targets)

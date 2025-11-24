@@ -33,6 +33,9 @@ pip install -e .                            # installs pybullet + numpy
 
 - On macOS, you may need Xcode Command Line Tools once: `xcode-select --install`.
 - PyBullet builds a native wheel; it can take a minute on first install.
+- **Every new shell**: reactivate the venv (`source .venv/bin/activate`). If you forget,
+  `python/pip` will fall back to the system interpreter and you may see PEP 668 errors
+  about an "externally managed environment."
 
 Quick smoke test (no GUI):
 ```bash
@@ -44,3 +47,24 @@ print("client:", cid, "robot:", robot)
 p.disconnect()
 PY
 ```
+
+### VSCode run/debug helpers
+
+- Open `sim/run_gui.py` and use "Run Python File" or drop this into `.vscode/launch.json`:
+
+```jsonc
+{
+  "name": "QArm GUI",
+  "type": "python",
+  "request": "launch",
+  "module": "sim.run_gui",
+  "justMyCode": true,
+  "args": ["--gui", "--real-time", "--sliders"]
+}
+```
+
+- Script flags:
+  - `--gui` to show the PyBullet window (omit for headless smoke tests).
+  - `--real-time` to let PyBullet handle stepping internally.
+  - `--sliders` to expose only the "Joint Angles" control panel.
+  - `--headless-steps N` to limit DIRECT-mode test duration.
