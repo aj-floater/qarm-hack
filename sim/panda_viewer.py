@@ -37,6 +37,7 @@ try:
         TextNode,
         Vec3,
         Vec4,
+        Material,
     )
 except ImportError as exc:  # pragma: no cover - runtime guard
     raise SystemExit("Panda3D is not installed. Try `pip install panda3d`.") from exc
@@ -118,18 +119,38 @@ class PandaArmViewer(ShowBase):
         self.taskMgr.add(self._update_task, "update-task")
 
     def _setup_scene(self) -> None:
-        self.setBackgroundColor(0, 0, 0, 1)
+        # Slightly lifted dark background with a hint of blue.
+        self.setBackgroundColor(0.03, 0.03, 0.03, 1)
         self.camLens.setNearFar(0.01, 10.0)
+        # Ambient + key/fill/rim lights for depth and highlights.
         amb = AmbientLight("ambient")
-        amb.setColor(Vec4(0.3, 0.3, 0.3, 1))
+        # Brighter ambient for overall lift.
+        amb.setColor(Vec4(0.18, 0.18, 0.19, 1))
         amb_np = self.render.attachNewNode(amb)
         self.render.setLight(amb_np)
 
-        sun = DirectionalLight("sun")
-        sun.setColor(Vec4(0.8, 0.8, 0.8, 1))
-        sun_np = self.render.attachNewNode(sun)
-        sun_np.setHpr(45, -45, 0)
-        self.render.setLight(sun_np)
+        key = DirectionalLight("key")
+        # Brighter key with a mild warm tint.
+        key.setColor(Vec4(1.1, 1.05, 1.0, 1))
+        key.setShadowCaster(False)
+        key_np = self.render.attachNewNode(key)
+        key_np.setHpr(-30, -45, 0)
+        self.render.setLight(key_np)
+
+        # Optional subtle horizon tint via a translucent card.
+        try:
+            from panda3d.core import CardMaker, TransparencyAttrib
+
+            cm = CardMaker("horizon")
+            cm.setFrame(-1, 1, -1, 1)
+            card = self.render2d.attachNewNode(cm.generate())
+            card.setPos(0, 0, -0.2)
+            card.setScale(1.5)
+            card.setColor(0.08, 0.1, 0.14, 0.25)
+            card.setTransparency(TransparencyAttrib.MAlpha)
+            card.setBin("background", 0)
+        except Exception:
+            pass
 
         self._create_grid()
         self._update_camera()
@@ -149,38 +170,47 @@ class PandaArmViewer(ShowBase):
             for path in paths:
                 node = self._load_mesh(path)
                 node.reparentTo(parent)
-            parent.setColor(Vec4(0.2, 0.2, 0.22, 1))
+            # Set per-link colors (base dark grey, red accent on YAW) via a material.
+            mat = Material()
+            if link == "YAW":
+                diffuse = Vec4(0.6, 0.14, 0.14, 1)
+            elif link == "END-EFFECTOR":
+                diffuse = Vec4(0.6, 0.14, 0.14, 1)  # make gripper red
+            else:
+                diffuse = Vec4(0.12, 0.12, 0.14, 1)
+            mat.setDiffuse(diffuse)
+            mat.setAmbient(diffuse * 0.8)
+            mat.setSpecular(Vec4(0.08, 0.08, 0.08, 1))
+            mat.setShininess(5.0)
+            parent.setMaterial(mat, 1)
+            parent.setColor(Vec4(1, 1, 1, 1))
             parent.setTwoSided(True)
             self.link_nodes[link] = parent
 
     def _setup_ui(self) -> None:
-        y = 0.9
+        # Position sliders in the top-right corner.
+        x = 0.8
+        y = 0.85
         for _, name, lower, upper in self.physics.joint_meta:
-            lbl = DirectLabel(
-                text=name,
-                scale=0.05,
-                pos=(-1.3, 0, y),
-                frameColor=(0, 0, 0, 0),
-                text_align=TextNode.ALeft,
-            )
             slider = DirectSlider(
                 range=(lower, upper),
                 value=0.0,
                 pageSize=(upper - lower) / 100.0,
                 scale=0.3,
-                pos=(-0.2, 0, y),
+                pos=(x, 0, y),
                 command=self._on_slider_change,
             )
+            label = DirectLabel(
+                text=name,
+                scale=0.05,
+                pos=(x - 0.45, 0, y + 0.02),
+                frameColor=(0, 0, 0, 0),
+                text_fg=(1, 1, 1, 1),
+                text_align=TextNode.ALeft,
+            )
+            label.reparentTo(self.aspect2d)
             self.joint_sliders.append(slider)
             y -= 0.12
-
-        self.fps_label = DirectLabel(
-            text="",
-            scale=0.05,
-            pos=(1.0, 0, 0.9),
-            frameColor=(0, 0, 0, 0),
-            text_align=TextNode.ARight,
-        )
 
     def _bind_controls(self) -> None:
         self.accept("escape", self._quit)
