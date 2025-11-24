@@ -54,6 +54,7 @@ class QArmSimEnv:
         enable_gripper_sliders: bool = False,
         gripper_only: bool = False,
         gripper_urdf_path: Path | None = None,
+        gripper_search_paths: Sequence[Path] | None = None,
     ) -> None:
         mode = p.GUI if gui else p.DIRECT
         connect_options = ""
@@ -89,12 +90,22 @@ class QArmSimEnv:
         default_gripper_urdf = Path(__file__).resolve().parent.parent / "qarm_gripper" / "urdf" / "qarm_gripper.urdf"
         self.gripper_urdf = Path(gripper_urdf_path) if gripper_urdf_path is not None else default_gripper_urdf
 
+        default_search_paths = [
+            Path(__file__).resolve().parent.parent / "qarm_gripper",
+            Path(__file__).resolve().parent.parent / "qarm_gripper_new",
+        ]
+        self.gripper_search_paths = list(gripper_search_paths) if gripper_search_paths is not None else default_search_paths
+
         p.setTimeStep(self.time_step, physicsClientId=self.client)
         p.setGravity(0, 0, -9.81, physicsClientId=self.client)
         p.setRealTimeSimulation(1 if self.real_time else 0, physicsClientId=self.client)
 
         if self.gui_enabled:
             self._configure_gui()
+
+        for path in self.gripper_search_paths:
+            if path.exists():
+                p.setAdditionalSearchPath(str(path), physicsClientId=self.client)
 
         if add_ground or self.gripper_only:
             self.floor_id = self._create_floor(enable_collision=True)
@@ -251,10 +262,10 @@ class QArmSimEnv:
             ):
                 p.configureDebugVisualizer(flag, 0, physicsClientId=self.client)
 
-        if self.enable_joint_sliders or self.enable_gripper_sliders or self.show_debug_gui:
-            p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1, physicsClientId=self.client)
-        elif self.dark_mode:
-            p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0, physicsClientId=self.client)
+        # Show Bullet's on-screen GUI so the debug panels/sliders are available.
+        p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1, physicsClientId=self.client)
+        p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 1, physicsClientId=self.client)
+        p.configureDebugVisualizer(p.COV_ENABLE_KEYBOARD_SHORTCUTS, 1, physicsClientId=self.client)
 
     def _create_joint_sliders(self) -> None:
         """Expose joint sliders in the PyBullet GUI for manual manipulation."""
@@ -291,7 +302,7 @@ class QArmSimEnv:
         base_visual = p.createVisualShape(
             shapeType=p.GEOM_BOX,
             halfExtents=[5, 5, 0.002],
-            rgbaColor=(*self.DARK_FLOOR_COLOR[:3], 0.2),
+            rgbaColor=(*self.DARK_FLOOR_COLOR[:3], 0.05),
             specularColor=[0.0, 0.0, 0.0],
             physicsClientId=self.client,
         )

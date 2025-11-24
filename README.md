@@ -32,7 +32,7 @@ pip install -e .                            # installs pybullet + numpy
 ```
 
 - On macOS, you may need Xcode Command Line Tools once: `xcode-select --install`.
-- PyBullet builds a native wheel; it can take a minute on first install.
+- PyBullet builds a native wheel; it can take a minute on first install. The Qt control panel depends on PyQt5 (installed via `pip install -e .`).
 - **Every new shell**: reactivate the venv (`source .venv/bin/activate`). If you forget,
   `python/pip` will fall back to the system interpreter and you may see PEP 668 errors
   about an "externally managed environment."
@@ -60,6 +60,22 @@ p.disconnect()
 PY
 ```
 
+## Running the sims (PyBullet + Qt controls)
+
+PyBullet's in-window UI (sliders, debug overlays) is disabled. A separate Qt window provides all controls.
+
+- **Actual sim (full arm, optional gripper):**
+  ```bash
+  python -m sim.actual_sim --real-time            # arm only
+  python -m sim.actual_sim --real-time --attach-gripper
+  ```
+- **Test sim (gripper-focused):**
+  ```bash
+  python -m sim.test_sim --real-time              # gripper-only by default
+  python -m sim.test_sim --real-time --with-arm   # include arm + gripper
+  ```
+- Use `--gripper-urdf PATH` in either launch to point at a URDF you're editing. `--light-mode` switches PyBullet to a light background.
+
 ### VSCode run/debug helpers
 
 - The repo tracks `.vscode/launch.json` so you get the launch targets on clone. The file contents:
@@ -72,31 +88,23 @@ PY
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "QArm GUI",
+      "name": "Actual Sim (Qt controls)",
       "type": "debugpy",
       "request": "launch",
-      "module": "sim.run_gui",
+      "module": "sim.actual_sim",
       "justMyCode": true,
-      "args": ["--gui", "--real-time", "--sliders"]
+      "args": ["--real-time"]
     },
     {
-      "name": "Gripper Only (GUI)",
+      "name": "Test Sim (Qt controls)",
       "type": "debugpy",
       "request": "launch",
-      "module": "sim.run_gui",
+      "module": "sim.test_sim",
       "justMyCode": true,
-      "args": ["--gui", "--real-time", "--gripper-only", "--gripper-sliders"]
+      "args": ["--real-time"]
     }
   ]
 }
 ```
 
-- Script flags:
-  - `--gui` to show the PyBullet window (omit for headless smoke tests).
-  - `--real-time` to let PyBullet handle stepping internally.
-  - `--sliders` to expose only the arm "Joint Angles" control panel.
-  - `--attach-gripper` to load `qarm_gripper` as a second PyBullet body and bolt it to the end effector (disabled in the default GUI launch for now).
-  - `--gripper-only` to load just the gripper, fixed to the floor (forces GUI on so you can see it while editing the URDF).
-  - `--gripper-sliders` to add live controls for the gripper joints (requires `--attach-gripper` or `--gripper-only`).
-  - `--gripper-urdf PATH` to point at a different gripper URDF when experimenting.
-  - `--headless-steps N` to limit DIRECT-mode test duration.
+- Launch configs use the Qt control panel (PyBullet UI hidden). `--real-time` is pre-wired; add more args as needed.
