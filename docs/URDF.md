@@ -70,7 +70,7 @@ This specifies a revolute joint whose pivot sits at the given origin relative to
 - **Consistent origins**: Align `<visual>` and `<collision>` origins with `<inertial>` where possible to avoid mesh offsets from third-party CAD exports.
 - **Unit conventions**: URDF assumes metres and radians. If the CAD export used millimetres, apply `scale="0.001 0.001 0.001"` on the `<mesh>` or re-export in metres.
 - **Debugging**: Load the URDF standalone (`python -m sim.bootstrap --urdf qarm_gripper/urdf/qarm_gripper.urdf --gui`) to verify joint axes and ranges before attaching it to the arm.
-- **Live gripper edits**: Use `python -m sim.run_gui --gripper-only --gripper-sliders [--gripper-urdf /path/to/file.urdf]` to load only the gripper in PyBullet, fixed to the floor, while you tweak the URDF. `--gripper-only` auto-enables the GUI and centers the camera on the gripper for quick inspection.
+- **Live gripper edits**: Use `python -m sim.test_sim --real-time [--gripper-urdf /path/to/file.urdf]` to load only the gripper in PyBullet, fixed to the floor, while you tweak the URDF. Use PyBullet's built-in sliders to drive the joints.
 
 For additional references, see:
 

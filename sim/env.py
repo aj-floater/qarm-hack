@@ -38,6 +38,7 @@ class QArmSimEnv:
     DARK_FLOOR_COLOR = (0.1, 0.1, 0.1, 1.0)
     LIGHT_FLOOR_COLOR = (0.8, 0.8, 0.8, 1.0)
     BACKDROP_COLOR = (0.85, 0.85, 0.85, 1.0)
+    HOLD_FORCE = 0.2  # small holding torque to keep joints from flopping when idle.
 
     def __init__(
         self,
@@ -55,6 +56,8 @@ class QArmSimEnv:
         gripper_only: bool = False,
         gripper_urdf_path: Path | None = None,
         gripper_search_paths: Sequence[Path] | None = None,
+        disable_gripper_self_collisions: bool = True,
+        static_gripper: bool = False,
     ) -> None:
         mode = p.GUI if gui else p.DIRECT
         connect_options = ""
@@ -86,6 +89,8 @@ class QArmSimEnv:
         self.joint_names: list[str] = []
         self.link_name_to_index: dict[str, int] = {}
         self.movable_joint_indices: list[int] = []
+        self.disable_gripper_self_collisions = disable_gripper_self_collisions
+        self.static_gripper = static_gripper
 
         default_gripper_urdf = Path(__file__).resolve().parent.parent / "qarm_gripper" / "urdf" / "qarm_gripper.urdf"
         self.gripper_urdf = Path(gripper_urdf_path) if gripper_urdf_path is not None else default_gripper_urdf
@@ -151,7 +156,8 @@ class QArmSimEnv:
             self.robot_id,
             jointIndices=self.movable_joint_indices,
             controlMode=p.VELOCITY_CONTROL,
-            forces=[0.0] * len(self.movable_joint_indices),
+            targetVelocities=[0.0] * len(self.movable_joint_indices),
+            forces=[self.HOLD_FORCE] * len(self.movable_joint_indices),
             physicsClientId=self.client,
         )
 
@@ -354,9 +360,19 @@ class QArmSimEnv:
             str(gripper_urdf),
             basePosition=base_pos,
             baseOrientation=base_orn,
-            useFixedBase=use_fixed_base,
+            useFixedBase=use_fixed_base or self.static_gripper,
             physicsClientId=self.client,
         )
+
+        if self.disable_gripper_self_collisions:
+            num_links = p.getNumJoints(gripper_id, physicsClientId=self.client)
+            # Disable collisions between all link pairs (including base -1).
+            link_indices = list(range(num_links))
+            for i in [-1] + link_indices:
+                for j in link_indices:
+                    if i == j:
+                        continue
+                    p.setCollisionFilterPair(gripper_id, gripper_id, i, j, enableCollision=0, physicsClientId=self.client)
 
         num_joints = p.getNumJoints(gripper_id, physicsClientId=self.client)
         self.gripper_joint_indices = list(range(num_joints))
@@ -365,14 +381,36 @@ class QArmSimEnv:
             for j in self.gripper_joint_indices
         ]
 
-        # Disable default motors so we can drive the gripper manually.
-        p.setJointMotorControlArray(
-            gripper_id,
-            jointIndices=self.gripper_joint_indices,
-            controlMode=p.VELOCITY_CONTROL,
-            forces=[0.0] * len(self.gripper_joint_indices),
-            physicsClientId=self.client,
-        )
+        if self.static_gripper:
+            # Lock joints in place with strong position holds and extra damping to prevent flailing.
+            current_positions = [p.getJointState(gripper_id, j, physicsClientId=self.client)[0] for j in self.gripper_joint_indices]
+            p.setJointMotorControlArray(
+                gripper_id,
+                jointIndices=self.gripper_joint_indices,
+                controlMode=p.POSITION_CONTROL,
+                targetPositions=current_positions,
+                forces=[5.0] * len(self.gripper_joint_indices),
+                positionGains=[1.0] * len(self.gripper_joint_indices),
+                physicsClientId=self.client,
+            )
+            for j in self.gripper_joint_indices:
+                p.changeDynamics(
+                    gripper_id,
+                    j,
+                    linearDamping=1.0,
+                    angularDamping=1.0,
+                    physicsClientId=self.client,
+                )
+        else:
+            # Disable default motors so we can drive the gripper manually.
+            p.setJointMotorControlArray(
+                gripper_id,
+                jointIndices=self.gripper_joint_indices,
+                controlMode=p.VELOCITY_CONTROL,
+                targetVelocities=[0.0] * len(self.gripper_joint_indices),
+                forces=[self.HOLD_FORCE] * len(self.gripper_joint_indices),
+                physicsClientId=self.client,
+            )
         return gripper_id
 
     def _attach_gripper(self) -> None:

@@ -32,7 +32,7 @@ pip install -e .                            # installs pybullet + numpy
 ```
 
 - On macOS, you may need Xcode Command Line Tools once: `xcode-select --install`.
-- PyBullet builds a native wheel; it can take a minute on first install. The Qt control panel depends on PyQt5 (installed via `pip install -e .`).
+- PyBullet builds a native wheel; it can take a minute on first install.
 - **Every new shell**: reactivate the venv (`source .venv/bin/activate`). If you forget,
   `python/pip` will fall back to the system interpreter and you may see PEP 668 errors
   about an "externally managed environment."
@@ -60,19 +60,19 @@ p.disconnect()
 PY
 ```
 
-## Running the sims (PyBullet + Qt controls)
-
-PyBullet's in-window UI (sliders, debug overlays) is disabled. A separate Qt window provides all controls.
+## Running the sims (PyBullet GUI)
 
 - **Actual sim (full arm, optional gripper):**
   ```bash
-  python -m sim.actual_sim --real-time            # arm only
-  python -m sim.actual_sim --real-time --attach-gripper
+  python -m sim.actual_sim --real-time            # arm only (PyBullet sliders)
+  python -m sim.actual_sim --real-time --attach-gripper            # attach default gripper
+  python -m sim.actual_sim --real-time --attach-gripper --new-gripper  # attach new gripper package
   ```
 - **Test sim (gripper-focused):**
   ```bash
-  python -m sim.test_sim --real-time              # gripper-only by default
+  python -m sim.test_sim --real-time              # gripper-only by default (PyBullet sliders)
   python -m sim.test_sim --real-time --with-arm   # include arm + gripper
+  python -m sim.test_sim --real-time --with-arm --new-gripper  # include new gripper package
   ```
 - Use `--gripper-urdf PATH` in either launch to point at a URDF you're editing. `--light-mode` switches PyBullet to a light background.
 
@@ -88,7 +88,7 @@ PyBullet's in-window UI (sliders, debug overlays) is disabled. A separate Qt win
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Actual Sim (Qt controls)",
+      "name": "Actual Sim (PyBullet GUI)",
       "type": "debugpy",
       "request": "launch",
       "module": "sim.actual_sim",
@@ -96,7 +96,7 @@ PyBullet's in-window UI (sliders, debug overlays) is disabled. A separate Qt win
       "args": ["--real-time"]
     },
     {
-      "name": "Test Sim (Qt controls)",
+      "name": "Test Sim (PyBullet GUI)",
       "type": "debugpy",
       "request": "launch",
       "module": "sim.test_sim",
@@ -107,4 +107,4 @@ PyBullet's in-window UI (sliders, debug overlays) is disabled. A separate Qt win
 }
 ```
 
-- Launch configs use the Qt control panel (PyBullet UI hidden). `--real-time` is pre-wired; add more args as needed.
+- Launch configs use PyBullet's own GUI and debug sliders. `--real-time` is pre-wired; add more args as needed.

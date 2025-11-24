@@ -5,20 +5,20 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "QArm GUI",
+      "name": "Actual Sim (PyBullet GUI)",
       "type": "debugpy",
       "request": "launch",
-      "module": "sim.run_gui",
+      "module": "sim.actual_sim",
       "justMyCode": true,
-      "args": ["--gui", "--real-time", "--sliders"]
+      "args": ["--real-time", "--attach-gripper", "--new-gripper"]
     },
     {
-      "name": "Gripper Only (GUI)",
+      "name": "Test Sim (PyBullet GUI)",
       "type": "debugpy",
       "request": "launch",
-      "module": "sim.run_gui",
+      "module": "sim.test_sim",
       "justMyCode": true,
-      "args": ["--gui", "--real-time", "--gripper-only", "--gripper-sliders"]
+      "args": ["--real-time"]
     }
   ]
 }
