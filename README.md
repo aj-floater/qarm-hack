@@ -24,7 +24,7 @@ Next steps (to be done by a human):
 ## Local setup (for devs and students)
 
 ```bash
-cd /Users/archiejames/coding/qarm-hack      # or clone destination
+cd /qarm-hack      # or clone destination
 python3 -m venv .venv
 source .venv/bin/activate                   # Windows: .venv\Scripts\activate
 pip install --upgrade pip
@@ -36,6 +36,18 @@ pip install -e .                            # installs pybullet + numpy
 - **Every new shell**: reactivate the venv (`source .venv/bin/activate`). If you forget,
   `python/pip` will fall back to the system interpreter and you may see PEP 668 errors
   about an "externally managed environment."
+
+## New to Python/VSCode? Start here
+
+- Install VSCode from code.visualstudio.com (Windows/macOS/Linux).
+- Install Python 3.11+:
+  - Windows: grab the installer from python.org, check "Add python.exe to PATH".
+  - macOS: `brew install python` or use the python.org installer.
+  - Ubuntu/Debian: `sudo apt-get install python3 python3-venv python3-pip`.
+- Launch VSCode and install the "Python" extension (ms-python.python). Pylance is recommended too.
+- Create/select the project venv in VSCode: `Ctrl+Shift+P` → start typing **Python: Create Environment** → select it → choose `Venv` and the Python you installed. VSCode will wire the workspace to that interpreter.
+- Open a new VSCode terminal; it should auto-activate `.venv` (or run the `source .venv/bin/activate` / `.venv\Scripts\activate` command shown above).
+- Run `pip install -e .` in that terminal to pull dependencies into the venv. If the interpreter shown in VSCode's status bar is not your venv, click it and pick the `.venv` interpreter.
 
 Quick smoke test (no GUI):
 ```bash
@@ -50,21 +62,41 @@ PY
 
 ### VSCode run/debug helpers
 
-- Open `sim/run_gui.py` and use "Run Python File" or drop this into `.vscode/launch.json`:
+- The repo tracks `.vscode/launch.json` so you get the launch targets on clone. The file contents:
 
 ```jsonc
 {
-  "name": "QArm GUI",
-  "type": "python",
-  "request": "launch",
-  "module": "sim.run_gui",
-  "justMyCode": true,
-  "args": ["--gui", "--real-time", "--sliders"]
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "QArm GUI",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "sim.run_gui",
+      "justMyCode": true,
+      "args": ["--gui", "--real-time", "--sliders"]
+    },
+    {
+      "name": "Gripper Only (GUI)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "sim.run_gui",
+      "justMyCode": true,
+      "args": ["--gui", "--real-time", "--gripper-only", "--gripper-sliders"]
+    }
+  ]
 }
 ```
 
 - Script flags:
   - `--gui` to show the PyBullet window (omit for headless smoke tests).
   - `--real-time` to let PyBullet handle stepping internally.
-  - `--sliders` to expose only the "Joint Angles" control panel.
+  - `--sliders` to expose only the arm "Joint Angles" control panel.
+  - `--attach-gripper` to load `qarm_gripper` as a second PyBullet body and bolt it to the end effector (disabled in the default GUI launch for now).
+  - `--gripper-only` to load just the gripper, fixed to the floor (forces GUI on so you can see it while editing the URDF).
+  - `--gripper-sliders` to add live controls for the gripper joints (requires `--attach-gripper` or `--gripper-only`).
+  - `--gripper-urdf PATH` to point at a different gripper URDF when experimenting.
   - `--headless-steps N` to limit DIRECT-mode test duration.

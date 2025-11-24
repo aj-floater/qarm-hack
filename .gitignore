@@ -14,6 +14,8 @@ dist/
 .env
 .env*/
 .venv/
-.vscode/
+.vscode/*
+!.vscode/
+!.vscode/launch.json
 .idea/
 .DS_Store
