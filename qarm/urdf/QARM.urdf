@@ -264,6 +264,29 @@
           filename="package://QARM/meshes/END-EFFECTOR.STL" />
       </geometry>
     </collision>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://QARM/meshes/Gripper.stl" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.85 0.85 0.88 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://QARM/meshes/Gripper.stl" />
+      </geometry>
+    </collision>
   </link>
   <joint
     name="WRIST"

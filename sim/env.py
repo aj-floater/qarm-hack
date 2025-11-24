@@ -51,13 +51,6 @@ class QArmSimEnv:
         show_debug_gui: bool = False,
         show_camera_previews: bool = False,
         enable_joint_sliders: bool = False,
-        attach_gripper: bool = False,
-        enable_gripper_sliders: bool = False,
-        gripper_only: bool = False,
-        gripper_urdf_path: Path | None = None,
-        gripper_search_paths: Sequence[Path] | None = None,
-        disable_gripper_self_collisions: bool = True,
-        static_gripper: bool = False,
     ) -> None:
         mode = p.GUI if gui else p.DIRECT
         connect_options = ""
@@ -75,31 +68,13 @@ class QArmSimEnv:
         self.show_debug_gui = show_debug_gui
         self.show_camera_previews = show_camera_previews
         self.enable_joint_sliders = enable_joint_sliders
-        self.attach_gripper = attach_gripper and not gripper_only
-        self.enable_gripper_sliders = enable_gripper_sliders
-        self.gripper_only = gripper_only
         self.floor_id: int | None = None
         self.robot_id: int | None = None
         self._joint_slider_ids: list[int] = []
-        self._gripper_slider_ids: list[int] = []
-        self.gripper_id: int | None = None
-        self.gripper_joint_indices: list[int] = []
-        self.gripper_joint_names: list[str] = []
         self.joint_indices: list[int] = []
         self.joint_names: list[str] = []
         self.link_name_to_index: dict[str, int] = {}
         self.movable_joint_indices: list[int] = []
-        self.disable_gripper_self_collisions = disable_gripper_self_collisions
-        self.static_gripper = static_gripper
-
-        default_gripper_urdf = Path(__file__).resolve().parent.parent / "qarm_gripper" / "urdf" / "qarm_gripper.urdf"
-        self.gripper_urdf = Path(gripper_urdf_path) if gripper_urdf_path is not None else default_gripper_urdf
-
-        default_search_paths = [
-            Path(__file__).resolve().parent.parent / "qarm_gripper",
-            Path(__file__).resolve().parent.parent / "qarm_gripper_new",
-        ]
-        self.gripper_search_paths = list(gripper_search_paths) if gripper_search_paths is not None else default_search_paths
 
         p.setTimeStep(self.time_step, physicsClientId=self.client)
         p.setGravity(0, 0, -9.81, physicsClientId=self.client)
@@ -108,27 +83,8 @@ class QArmSimEnv:
         if self.gui_enabled:
             self._configure_gui()
 
-        for path in self.gripper_search_paths:
-            if path.exists():
-                p.setAdditionalSearchPath(str(path), physicsClientId=self.client)
-
-        if add_ground or self.gripper_only:
+        if add_ground:
             self.floor_id = self._create_floor(enable_collision=True)
-
-        if self.gripper_only:
-            if not self.gripper_urdf.exists():
-                raise FileNotFoundError(f"Gripper URDF not found at {self.gripper_urdf}")
-            self.gripper_id = self._load_gripper_body(
-                gripper_urdf=self.gripper_urdf,
-                base_pos=[0.0, 0.0, 0.0],
-                base_orn=[0.0, 0.0, 0.0, 1.0],
-                use_fixed_base=True,
-            )
-            if self.gui_enabled:
-                self._focus_camera_on_gripper()
-            if self.gui_enabled and self.enable_gripper_sliders:
-                self._create_gripper_sliders()
-            return
 
         urdf_path = urdf_path or Path(__file__).resolve().parent.parent / "qarm" / "urdf" / "QARM.urdf"
         if not urdf_path.exists():
@@ -161,15 +117,10 @@ class QArmSimEnv:
             physicsClientId=self.client,
         )
 
-        if self.attach_gripper:
-            self._attach_gripper()
-
         if self.gui_enabled and self.enable_joint_sliders:
             self._create_joint_sliders()
-        if self.gui_enabled and self.enable_gripper_sliders and self.gripper_id is not None:
-            self._create_gripper_sliders()
 
-    def reset(self, home: Sequence[float] | None = None, gripper_home: Sequence[float] | None = None) -> None:
+    def reset(self, home: Sequence[float] | None = None) -> None:
         """
         Reset joints to a home pose (defaults to zeros for movable joints).
 
@@ -181,15 +132,6 @@ class QArmSimEnv:
                 raise ValueError(f"Home pose length {len(target)} != movable joints {len(self.movable_joint_indices)}")
             for joint_id, angle in zip(self.movable_joint_indices, target):
                 p.resetJointState(self.robot_id, joint_id, angle, physicsClientId=self.client)
-
-        if self.gripper_id is not None and self.gripper_joint_indices:
-            g_target = list(gripper_home) if gripper_home is not None else [0.0] * len(self.gripper_joint_indices)
-            if len(g_target) != len(self.gripper_joint_indices):
-                raise ValueError(
-                    f"Gripper home length {len(g_target)} != gripper joints {len(self.gripper_joint_indices)}"
-                )
-            for joint_id, angle in zip(self.gripper_joint_indices, g_target):
-                p.resetJointState(self.gripper_id, joint_id, angle, physicsClientId=self.client)
 
     def step(self, n: int = 1) -> None:
         """Advance the simulation by n steps (no-op if running in real-time mode)."""
@@ -213,9 +155,9 @@ class QArmSimEnv:
             jointIndices=self.movable_joint_indices,
             controlMode=p.POSITION_CONTROL,
             targetPositions=list(q),
-        forces=[max_force] * len(self.movable_joint_indices),
-        physicsClientId=self.client,
-    )
+            forces=[max_force] * len(self.movable_joint_indices),
+            physicsClientId=self.client,
+        )
 
     def get_joint_positions(self, indices: Iterable[int] | None = None) -> list[float]:
         """
@@ -225,32 +167,6 @@ class QArmSimEnv:
             raise RuntimeError("No arm loaded in the simulation.")
         selected = list(indices) if indices is not None else self.movable_joint_indices
         states = p.getJointStates(self.robot_id, selected, physicsClientId=self.client)
-        return [s[0] for s in states]
-
-    def set_gripper_joint_positions(self, q: Sequence[float], max_force: float = 2.0) -> None:
-        """
-        Command the attached gripper joints (if present).
-
-        q order follows the joint order defined in qarm_gripper/urdf/qarm_gripper.urdf.
-        """
-        if self.gripper_id is None or not self.gripper_joint_indices:
-            raise RuntimeError("No gripper loaded. Initialize with gripper_only=True or attach_gripper=True.")
-        if len(q) != len(self.gripper_joint_indices):
-            raise ValueError(f"Expected {len(self.gripper_joint_indices)} gripper joints, got {len(q)}")
-        p.setJointMotorControlArray(
-            self.gripper_id,
-            jointIndices=self.gripper_joint_indices,
-            controlMode=p.POSITION_CONTROL,
-            targetPositions=list(q),
-            forces=[max_force] * len(self.gripper_joint_indices),
-            physicsClientId=self.client,
-        )
-
-    def get_gripper_joint_positions(self) -> list[float]:
-        """Return current joint positions for the attached gripper."""
-        if self.gripper_id is None or not self.gripper_joint_indices:
-            raise RuntimeError("No gripper loaded. Initialize with gripper_only=True or attach_gripper=True.")
-        states = p.getJointStates(self.gripper_id, self.gripper_joint_indices, physicsClientId=self.client)
         return [s[0] for s in states]
 
     def disconnect(self) -> None:
@@ -285,18 +201,6 @@ class QArmSimEnv:
                 startValue=0.0,
             )
             self._joint_slider_ids.append(slider_id)
-
-    def _create_gripper_sliders(self) -> None:
-        """Create sliders for the attached gripper joints."""
-        self._gripper_slider_ids.clear()
-        for idx, name in zip(self.gripper_joint_indices, self.gripper_joint_names):
-            slider_id = p.addUserDebugParameter(
-                paramName=f"{name} (rad)",
-                rangeMin=-1.0,
-                rangeMax=1.0,
-                startValue=0.0,
-            )
-            self._gripper_slider_ids.append(slider_id)
 
     def _create_floor(self, enable_collision: bool) -> int:
         """Create a translucent base plane to provide spatial reference."""
@@ -338,127 +242,8 @@ class QArmSimEnv:
                 physicsClientId=self.client,
             )
 
-    def _focus_camera_on_gripper(self) -> None:
-        """Pull the camera toward the origin where the gripper sits."""
-        p.resetDebugVisualizerCamera(
-            cameraDistance=0.3,
-            cameraYaw=45,
-            cameraPitch=-35,
-            cameraTargetPosition=[0.0, 0.0, 0.05],
-            physicsClientId=self.client,
-        )
-
-    def _load_gripper_body(
-        self,
-        gripper_urdf: Path,
-        base_pos: Sequence[float],
-        base_orn: Sequence[float],
-        use_fixed_base: bool,
-    ) -> int:
-        """Load the gripper URDF and collect joint metadata."""
-        gripper_id = p.loadURDF(
-            str(gripper_urdf),
-            basePosition=base_pos,
-            baseOrientation=base_orn,
-            useFixedBase=use_fixed_base or self.static_gripper,
-            physicsClientId=self.client,
-        )
-
-        if self.disable_gripper_self_collisions:
-            num_links = p.getNumJoints(gripper_id, physicsClientId=self.client)
-            # Disable collisions between all link pairs (including base -1).
-            link_indices = list(range(num_links))
-            for i in [-1] + link_indices:
-                for j in link_indices:
-                    if i == j:
-                        continue
-                    p.setCollisionFilterPair(gripper_id, gripper_id, i, j, enableCollision=0, physicsClientId=self.client)
-
-        num_joints = p.getNumJoints(gripper_id, physicsClientId=self.client)
-        self.gripper_joint_indices = list(range(num_joints))
-        self.gripper_joint_names = [
-            p.getJointInfo(gripper_id, j, physicsClientId=self.client)[1].decode("utf-8")
-            for j in self.gripper_joint_indices
-        ]
-
-        if self.static_gripper:
-            # Lock joints in place with strong position holds and extra damping to prevent flailing.
-            current_positions = [p.getJointState(gripper_id, j, physicsClientId=self.client)[0] for j in self.gripper_joint_indices]
-            p.setJointMotorControlArray(
-                gripper_id,
-                jointIndices=self.gripper_joint_indices,
-                controlMode=p.POSITION_CONTROL,
-                targetPositions=current_positions,
-                forces=[5.0] * len(self.gripper_joint_indices),
-                positionGains=[1.0] * len(self.gripper_joint_indices),
-                physicsClientId=self.client,
-            )
-            for j in self.gripper_joint_indices:
-                p.changeDynamics(
-                    gripper_id,
-                    j,
-                    linearDamping=1.0,
-                    angularDamping=1.0,
-                    physicsClientId=self.client,
-                )
-        else:
-            # Disable default motors so we can drive the gripper manually.
-            p.setJointMotorControlArray(
-                gripper_id,
-                jointIndices=self.gripper_joint_indices,
-                controlMode=p.VELOCITY_CONTROL,
-                targetVelocities=[0.0] * len(self.gripper_joint_indices),
-                forces=[self.HOLD_FORCE] * len(self.gripper_joint_indices),
-                physicsClientId=self.client,
-            )
-        return gripper_id
-
-    def _attach_gripper(self) -> None:
-        """Load qarm_gripper as a separate PyBullet body and constrain it to the end effector."""
-        if not self.gripper_urdf.exists():
-            raise FileNotFoundError(f"Gripper URDF not found at {self.gripper_urdf}")
-
-        ee_index = self.link_name_to_index.get("END-EFFECTOR")
-        if ee_index is None:
-            raise RuntimeError("END-EFFECTOR link not found; cannot attach gripper.")
-
-        ee_state = p.getLinkState(
-            self.robot_id,
-            ee_index,
-            computeForwardKinematics=True,
-            physicsClientId=self.client,
-        )
-        base_pos = ee_state[4]
-        base_orn = ee_state[5]
-
-        self.gripper_id = self._load_gripper_body(
-            gripper_urdf=self.gripper_urdf,
-            base_pos=base_pos,
-            base_orn=base_orn,
-            use_fixed_base=False,
-        )
-
-        constraint_id = p.createConstraint(
-            parentBodyUniqueId=self.robot_id,
-            parentLinkIndex=ee_index,
-            childBodyUniqueId=self.gripper_id,
-            childLinkIndex=-1,
-            jointType=p.JOINT_FIXED,
-            jointAxis=[0, 0, 0],
-            parentFramePosition=[0, 0, 0],
-            childFramePosition=[0, 0, 0],
-            parentFrameOrientation=[0, 0, 0, 1],
-            childFrameOrientation=[0, 0, 0, 1],
-            physicsClientId=self.client,
-        )
-        if constraint_id < 0:
-            raise RuntimeError("Failed to create constraint between arm and gripper.")
-
     def apply_joint_slider_targets(self) -> None:
         """Read joint slider values (if enabled) and command the arm accordingly."""
         if self._joint_slider_ids:
             targets = [p.readUserDebugParameter(slider_id) for slider_id in self._joint_slider_ids]
             self.set_joint_positions(targets)
-        if self._gripper_slider_ids and self.gripper_id is not None:
-            g_targets = [p.readUserDebugParameter(slider_id) for slider_id in self._gripper_slider_ids]
-            self.set_gripper_joint_positions(g_targets)

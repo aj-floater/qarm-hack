@@ -10,15 +10,15 @@
       "request": "launch",
       "module": "sim.actual_sim",
       "justMyCode": true,
-      "args": ["--real-time", "--attach-gripper", "--new-gripper"]
+      "args": ["--real-time"]
     },
     {
-      "name": "Test Sim (PyBullet GUI)",
+      "name": "Quick Run (run_gui)",
       "type": "debugpy",
       "request": "launch",
-      "module": "sim.test_sim",
+      "module": "sim.run_gui",
       "justMyCode": true,
-      "args": ["--real-time"]
+      "args": ["--gui", "--sliders", "--real-time"]
     }
   ]
 }

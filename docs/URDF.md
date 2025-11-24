@@ -66,11 +66,11 @@ This specifies a revolute joint whose pivot sits at the given origin relative to
 
 ## Practical tips
 
-- **Reuse packages**: Keep arm and gripper URDFs separate if you expect to swap variants. Attach them in simulation via constraints (see `QArmSimEnv._attach_gripper`) or by adding a fixed joint in the arm URDF.
+- **Reuse packages**: Keep arm and gripper URDFs separate if you expect to swap variants. In this project the standalone gripper mesh (`Gripper.stl`) is mounted directly on the arm's END-EFFECTOR in `qarm/urdf/QARM.urdf` for simplicity.
 - **Consistent origins**: Align `<visual>` and `<collision>` origins with `<inertial>` where possible to avoid mesh offsets from third-party CAD exports.
 - **Unit conventions**: URDF assumes metres and radians. If the CAD export used millimetres, apply `scale="0.001 0.001 0.001"` on the `<mesh>` or re-export in metres.
-- **Debugging**: Load the URDF standalone (`python -m sim.bootstrap --urdf qarm_gripper/urdf/qarm_gripper.urdf --gui`) to verify joint axes and ranges before attaching it to the arm.
-- **Live gripper edits**: Use `python -m sim.test_sim --real-time [--gripper-urdf /path/to/file.urdf]` to load only the gripper in PyBullet, fixed to the floor, while you tweak the URDF. Use PyBullet's built-in sliders to drive the joints.
+- **Debugging**: Load the URDF standalone (`python -m sim.bootstrap --urdf qarm/urdf/QARM.urdf --gui`) to verify joint axes and ranges before driving it.
+- **Live editing**: Use `python -m sim.run_gui --gui --sliders` to load the arm in PyBullet with debug sliders while you tweak URDF visuals.
 
 For additional references, see:
 

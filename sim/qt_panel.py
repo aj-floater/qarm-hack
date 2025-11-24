@@ -1,15 +1,9 @@
-"""
-Qt control panel for the QArm PyBullet simulation.
-
-This keeps PyBullet's own sliders hidden and exposes joint controls in a
-separate window. Designed for quick iteration during the hackathon.
-"""
+"""Qt control panel for the QArm PyBullet simulation (arm-only)."""
 
 from __future__ import annotations
 
 import sys
 import traceback
-from typing import Sequence
 
 try:
     from PyQt5 import QtCore, QtWidgets
@@ -25,18 +19,15 @@ from sim.env import QArmSimEnv
 
 
 class QArmControlWindow(QtWidgets.QWidget):
-    """Minimal Qt window exposing sliders for arm and gripper joints."""
+    """Minimal Qt window exposing sliders for the arm joints."""
 
     SLIDER_SCALE = 1000  # convert between radians and slider ints
 
-    def __init__(self, env: QArmSimEnv, include_gripper: bool = True, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(self, env: QArmSimEnv, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self.env = env
-        self.include_gripper = include_gripper and env.gripper_id is not None
         self._joint_sliders: list[QtWidgets.QSlider] = []
         self._joint_labels: list[QtWidgets.QLabel] = []
-        self._gripper_sliders: list[QtWidgets.QSlider] = []
-        self._gripper_labels: list[QtWidgets.QLabel] = []
         self._disconnected = False
 
         self._build_ui()
@@ -71,26 +62,7 @@ class QArmControlWindow(QtWidgets.QWidget):
             home_btn.clicked.connect(self._reset_arm)
             layout.addWidget(home_btn)
 
-        if self.include_gripper and self.env.gripper_joint_indices:
-            grip_group = QtWidgets.QGroupBox("Gripper joints")
-            grip_layout = QtWidgets.QFormLayout()
-            for name in self.env.gripper_joint_names:
-                slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-                slider.setRange(int(-1.0 * self.SLIDER_SCALE), int(1.0 * self.SLIDER_SCALE))
-                slider.setValue(0)
-                slider.valueChanged.connect(self._on_gripper_slider_change)
-                label = QtWidgets.QLabel("0.000")
-                self._gripper_sliders.append(slider)
-                self._gripper_labels.append(label)
-                grip_layout.addRow(f"{name}", self._stack(slider, label))
-            grip_group.setLayout(grip_layout)
-            layout.addWidget(grip_group)
-
-            g_home_btn = QtWidgets.QPushButton("Reset gripper to home")
-            g_home_btn.clicked.connect(self._reset_gripper)
-            layout.addWidget(g_home_btn)
-
-        if not self._joint_sliders and not self._gripper_sliders:
+        if not self._joint_sliders:
             layout.addWidget(QtWidgets.QLabel("No controllable joints found in this environment."))
 
         self.setLayout(layout)
@@ -129,10 +101,6 @@ class QArmControlWindow(QtWidgets.QWidget):
             positions = self.env.get_joint_positions()
             for label, pos in zip(self._joint_labels, positions):
                 label.setText(f"{pos:+.3f}")
-        if self._gripper_labels:
-            positions = self.env.get_gripper_joint_positions()
-            for label, pos in zip(self._gripper_labels, positions):
-                label.setText(f"{pos:+.3f}")
 
     def _ensure_connected(self) -> bool:
         if self._disconnected:
@@ -163,18 +131,6 @@ class QArmControlWindow(QtWidgets.QWidget):
         except Exception as exc:
             self._report_exception("arm joint set", exc)
 
-    def _on_gripper_slider_change(self) -> None:
-        if not self._ensure_connected():
-            return
-        if self.env.gripper_id is None:
-            return
-        targets = [s.value() / self.SLIDER_SCALE for s in self._gripper_sliders]
-        try:
-            self.env.set_gripper_joint_positions(targets)
-            self.env.step()
-        except Exception as exc:
-            self._report_exception("gripper joint set", exc)
-
     def _reset_arm(self) -> None:
         try:
             self.env.reset()
@@ -185,24 +141,11 @@ class QArmControlWindow(QtWidgets.QWidget):
         except Exception as exc:
             self._report_exception("arm reset", exc)
 
-    def _reset_gripper(self) -> None:
-        try:
-            home_arm = None
-            if self.env.robot_id is not None and self._joint_sliders:
-                home_arm = self.env.get_joint_positions()
-            self.env.reset(home=home_arm, gripper_home=[0.0] * len(self._gripper_sliders))
-            for slider in self._gripper_sliders:
-                slider.blockSignals(True)
-                slider.setValue(0)
-                slider.blockSignals(False)
-        except Exception as exc:
-            self._report_exception("gripper reset", exc)
 
-
-def launch_qt_control_panel(env: QArmSimEnv, include_gripper: bool, window_title: str) -> None:
+def launch_qt_control_panel(env: QArmSimEnv, window_title: str) -> None:
     """Start a Qt event loop and show the control window."""
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
-    win = QArmControlWindow(env, include_gripper=include_gripper)
+    win = QArmControlWindow(env)
     win.setWindowTitle(window_title)
     win.show()
     try:
