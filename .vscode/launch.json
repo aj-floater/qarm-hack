@@ -21,10 +21,10 @@
       "args": ["--gui", "--sliders", "--real-time"]
     },
     {
-      "name": "Qt Viewer (headless + camera)",
+      "name": "Panda Viewer",
       "type": "debugpy",
       "request": "launch",
-      "module": "sim.qt_viewer",
+      "module": "sim.panda_viewer",
       "justMyCode": true
     }
   ]
