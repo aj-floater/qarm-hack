@@ -141,6 +141,12 @@ class QArmSimEnv:
                 restitution=self.base_restitution,
                 yaw_deg=self.base_yaw_deg,
             )
+            p.changeDynamics(
+                self.floor_id,
+                -1,
+                contactProcessingThreshold=0.0,
+                physicsClientId=self.client,
+            )
         elif add_ground:
             self.floor_id = self._create_floor(enable_collision=True)
 
@@ -418,11 +424,13 @@ class QArmSimEnv:
         orientation_euler_deg: Sequence[float] | None = None,
         orientation_quat_xyzw: Sequence[float] | None = None,
         scale: float | Sequence[float] = 1.0,
+        collision_scale: float | Sequence[float] | None = None,
         rgba: Sequence[float] | None = None,
         collision_mesh_path: str | Path | None = None,
         enable_collision: bool = True,
         mass: float = 0.0,
         force_convex_for_dynamic: bool = True,
+        align_aabb_center: bool = False,
     ) -> int:
         """
         Spawn a static (mass=0) mesh in the scene and return its PyBullet body id.
@@ -432,6 +440,8 @@ class QArmSimEnv:
         mesh is provided or collision is disabled. Set mass>0 to let gravity act on
         the mesh. If `force_convex_for_dynamic` is True, dynamic bodies will use a
         convex collision shape (PyBullet ignores concave collision on dynamic bodies).
+        Set `align_aabb_center=True` to reposition the body so its AABB center matches
+        the requested position (helpful for off-center mesh origins). Defaults to False.
         """
 
         def _coerce_xyz(values: Sequence[float]) -> list[float]:
@@ -452,6 +462,7 @@ class QArmSimEnv:
 
         pos_xyz = _coerce_xyz(position)
         scale_vec = self._as_vec3(scale)
+        collision_scale_vec = self._as_vec3(collision_scale) if collision_scale is not None else scale_vec
 
         if orientation_quat_xyzw is not None:
             quat_vals = list(orientation_quat_xyzw)
@@ -497,7 +508,7 @@ class QArmSimEnv:
             collision_shape = p.createCollisionShape(
                 shapeType=p.GEOM_MESH,
                 fileName=str(used_collision_path),
-                meshScale=scale_vec,
+                meshScale=collision_scale_vec,
                 flags=(
                     0
                     if (mass > 0.0 and force_convex_for_dynamic)
@@ -516,7 +527,31 @@ class QArmSimEnv:
             baseOrientation=orientation_xyzw,
             physicsClientId=self.client,
         )
+
+        if align_aabb_center:
+            try:
+                aabb_min, aabb_max = p.getAABB(body_id, -1, physicsClientId=self.client)
+                center = [(a + b) * 0.5 for a, b in zip(aabb_min, aabb_max)]
+                delta = [pos_xyz[i] - center[i] for i in range(3)]
+                if any(abs(d) > 1e-8 for d in delta):
+                    curr_pos, curr_orn = p.getBasePositionAndOrientation(body_id, physicsClientId=self.client)
+                    new_pos = [curr_pos[i] + delta[i] for i in range(3)]
+                    p.resetBasePositionAndOrientation(
+                        body_id,
+                        new_pos,
+                        curr_orn,
+                        physicsClientId=self.client,
+                    )
+            except Exception:
+                pass
         if mass > 0.0:
+            ccd_radius = 0.015  # higher minimum to help very small scaled meshes
+            try:
+                aabb_min, aabb_max = p.getAABB(body_id, -1, physicsClientId=self.client)
+                max_dim = max((aabb_max[i] - aabb_min[i]) for i in range(3))
+                ccd_radius = max(ccd_radius, max_dim * 0.7)
+            except Exception:
+                pass
             p.changeDynamics(
                 body_id,
                 -1,
@@ -524,6 +559,10 @@ class QArmSimEnv:
                 restitution=0.0,
                 rollingFriction=0.001,
                 spinningFriction=0.001,
+                contactProcessingThreshold=0.0,
+                ccdSweptSphereRadius=ccd_radius,
+                contactStiffness=2e5,
+                contactDamping=2e3,
                 physicsClientId=self.client,
             )
         self.kinematic_objects.append(

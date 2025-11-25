@@ -31,6 +31,7 @@ DEFAULT_BASE_ASSETS = BaseMeshAssets(
     visual_mesh=MODELS_DIR / "pinebase.stl",
     collision_mesh=MODELS_DIR / "pinebase_collision.stl",
     visual_scale=(1.00, 1.00, 1.00),
+    # Collision mesh is authored 1000x smaller than the visual; keep it at 0.001 scale.
     collision_scale=(0.001, 0.001, 0.001),
     yaw_deg=180.0,
     friction=0.8,

@@ -87,10 +87,6 @@ class SimQArm(QArmBase):
         """Close the gripper if the current URDF exposes gripper joints."""
         self._set_gripper(open_state=False)
 
-    def add_kinematic_object(self, *args, **kwargs) -> int:
-        """Passthrough helper so student code can spawn static meshes without touching the env."""
-        return self.env.add_kinematic_object(*args, **kwargs)
-
     def move_ee_to(self, target_pos: Sequence[float]) -> None:  # pragma: no cover - placeholder for student IK
         """
         Hook for future end-effector control once IK is wired.

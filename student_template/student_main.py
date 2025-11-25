@@ -31,6 +31,8 @@ DEFAULT_DURATION_S = 0.0
 DEFAULT_STEP_S = 0.02
 USE_PANDA_VIEWER = True
 USE_PYBULLET_GUI = False
+# Set True to show joint sliders inside the Panda viewer.
+SHOW_JOINT_SLIDERS = False
 # Fill this list with entries to drop static meshes into the scene.
 # Example shape of an entry:
 # {
@@ -51,26 +53,21 @@ def add_kinematic_objects(arm: QArmBase, objects: list[dict[str, object]]) -> No
     if not objects:
         return
     env = getattr(arm, "env", None)
-    add_fn = getattr(arm, "add_kinematic_object", None)
-    if add_fn is None and env is not None:
-        add_fn = getattr(env, "add_kinematic_object", None)
-    if add_fn is None:
+    if env is None or not hasattr(env, "add_kinematic_object"):
         print("[Student] Current QArm backend does not support kinematic objects.")
         return
     for obj in objects:
-        kwargs = {
-            "mesh_path": obj["mesh_path"],
-            "position": obj.get("position", (0.0, 0.0, 0.0)),
-            "scale": obj.get("scale", 1.0),
-            "rgba": obj.get("rgba"),
-            "mass": obj.get("mass", 0.0),
-            "force_convex_for_dynamic": obj.get("force_convex_for_dynamic", True),
-        }
-        if "quat_xyzw" in obj:
-            kwargs["orientation_quat_xyzw"] = obj["quat_xyzw"]
-        else:
-            kwargs["orientation_euler_deg"] = obj.get("euler_deg")
-        body_id = add_fn(**kwargs)
+        body_id = env.add_kinematic_object(
+            mesh_path=obj["mesh_path"],
+            position=obj.get("position", (0.0, 0.0, 0.0)),
+            scale=obj.get("scale", 1.0),
+            collision_scale=obj.get("collision_scale"),
+            rgba=obj.get("rgba"),
+            mass=obj.get("mass", 0.0),
+            force_convex_for_dynamic=obj.get("force_convex_for_dynamic", True),
+            orientation_quat_xyzw=obj.get("quat_xyzw"),
+            orientation_euler_deg=obj.get("euler_deg"),
+        )
         print(f"[Student] Added kinematic mesh {obj['mesh_path']} (body_id={body_id})")
 
 
@@ -138,6 +135,7 @@ def main() -> None:
             hide_base=False,
             hide_accents=False,
             probe_base_collision=False,
+            show_sliders=SHOW_JOINT_SLIDERS,
         )
         physics = PhysicsBridge(
             time_step=arm.env.time_step,
