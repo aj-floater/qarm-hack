@@ -31,7 +31,6 @@ try:
     from panda3d.core import (
         AmbientLight,
         DirectionalLight,
-        Spotlight,
         Filename,
         LQuaternionf,
         LineSegs,
@@ -246,16 +245,12 @@ class PandaArmViewer(ShowBase):
         amb_np = self.render.attachNewNode(amb)
         self.render.setLight(amb_np)
 
-        # Spotlight for controllable shadows on the workspace.
-        key = Spotlight("key")
+        key = DirectionalLight("key")
+        # Brighter key with a warm tint + shadows.
         key.setColor(Vec4(1.25, 1.05, 0.9, 1))
         key.setShadowCaster(True, 4096, 4096)
-        key_lens = key.getLens()
-        key_lens.setFov(70)
-        key_lens.setNearFar(0.1, 5.0)
         key_np = self.render.attachNewNode(key)
-        key_np.setPos(1.2, -1.2, 1.8)
-        key_np.lookAt(0, 0, 0.05)
+        key_np.setHpr(-35, -45, 0)
         self.render.setLight(key_np)
 
         # Soft fill to lift shadows slightly.
@@ -478,8 +473,7 @@ class PandaArmViewer(ShowBase):
         grid.setTransparency(True)
         grid.setLightOff()
         grid.setBin("background", 5)
-        grid.setDepthOffset(2)
-        grid.setZ(-0.002)
+        grid.setDepthOffset(1)
 
     def _setup_static_meshes(self) -> None:
         """Load the pine base and colored accent meshes (visual-only)."""
