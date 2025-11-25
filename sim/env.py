@@ -13,6 +13,7 @@ consistent with the URDF:
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -51,6 +52,12 @@ class QArmSimEnv:
         show_debug_gui: bool = False,
         show_camera_previews: bool = False,
         enable_joint_sliders: bool = False,
+        base_mesh_path: Path | None = None,
+        base_collision_mesh_path: Path | None = None,
+        base_mesh_scale: float | Sequence[float] = 1.0,
+        base_friction: float = 0.8,
+        base_restitution: float = 0.0,
+        base_yaw_deg: float = 180.0,
     ) -> None:
         mode = p.GUI if gui else p.DIRECT
         connect_options = ""
@@ -83,7 +90,32 @@ class QArmSimEnv:
         if self.gui_enabled:
             self._configure_gui()
 
-        if add_ground:
+        self.base_mesh_path = Path(base_mesh_path) if base_mesh_path else None
+        self.base_collision_mesh_path = Path(base_collision_mesh_path) if base_collision_mesh_path else None
+        self.base_mesh_scale = base_mesh_scale
+        self.base_friction = float(base_friction)
+        self.base_restitution = float(base_restitution)
+        self.base_yaw_deg = float(base_yaw_deg)
+
+        if self.base_mesh_path is not None:
+            collision_path = self.base_collision_mesh_path or self.base_mesh_path
+            print(
+                "[QArmSimEnv] Using mesh floor:",
+                f"visual={self.base_mesh_path}",
+                f"collision={collision_path}",
+                f"scale={self.base_mesh_scale}",
+                f"friction={self.base_friction}",
+                f"restitution={self.base_restitution}",
+            )
+            self.floor_id = self._create_mesh_floor(
+                visual_path=self.base_mesh_path,
+                collision_path=collision_path,
+                mesh_scale=self.base_mesh_scale,
+                friction=self.base_friction,
+                restitution=self.base_restitution,
+                yaw_deg=self.base_yaw_deg,
+            )
+        elif add_ground:
             self.floor_id = self._create_floor(enable_collision=True)
 
         urdf_path = urdf_path or Path(__file__).resolve().parent.parent / "qarm" / "urdf" / "QARM.urdf"
@@ -223,6 +255,60 @@ class QArmSimEnv:
             physicsClientId=self.client,
         )
 
+    def _create_mesh_floor(
+        self,
+        visual_path: Path,
+        collision_path: Path,
+        mesh_scale: float | Sequence[float],
+        friction: float,
+        restitution: float,
+        yaw_deg: float,
+    ) -> int:
+        """Create a static mesh floor that matches the Panda3D base model."""
+        scale_vec = self._as_vec3(mesh_scale)
+        if not visual_path.exists():
+            raise FileNotFoundError(f"Base visual mesh not found: {visual_path}")
+        if not collision_path.exists():
+            raise FileNotFoundError(f"Base collision mesh not found: {collision_path}")
+
+        visual_shape = p.createVisualShape(
+            shapeType=p.GEOM_MESH,
+            fileName=str(visual_path),
+            meshScale=scale_vec,
+            rgbaColor=(0.82, 0.72, 0.55, 1.0),  # pine-like tint
+            specularColor=[0.08, 0.08, 0.08],
+            physicsClientId=self.client,
+        )
+        collision_shape = p.createCollisionShape(
+            shapeType=p.GEOM_MESH,
+            fileName=str(collision_path),
+            meshScale=scale_vec,
+            flags=p.GEOM_FORCE_CONCAVE_TRIMESH,
+            physicsClientId=self.client,
+        )
+        if collision_shape < 0:
+            raise RuntimeError(f"Failed to create collision shape from {collision_path}")
+        yaw_rad = math.radians(yaw_deg)
+        base_orientation = p.getQuaternionFromEuler([0.0, 0.0, yaw_rad])
+        body_id = p.createMultiBody(
+            baseMass=0.0,
+            baseCollisionShapeIndex=collision_shape,
+            baseVisualShapeIndex=visual_shape,
+            basePosition=[0.0, 0.0, 0.0],
+            baseOrientation=base_orientation,
+            physicsClientId=self.client,
+        )
+        p.changeDynamics(
+            body_id,
+            -1,
+            lateralFriction=friction,
+            restitution=restitution,
+            rollingFriction=0.001,
+            spinningFriction=0.001,
+            physicsClientId=self.client,
+        )
+        return body_id
+
     def _apply_robot_palette(self) -> None:
         """Tint the robot to the default dark grey and red colorway."""
         accent_links = {1, 3}  # YAW and ELBOW joints look good with red highlights.
@@ -294,3 +380,13 @@ class QArmSimEnv:
         if return_depth:
             return width, height, bytes(rgba), depth
         return width, height, bytes(rgba)
+
+    @staticmethod
+    def _as_vec3(scale: float | Sequence[float]) -> list[float]:
+        """Coerce a float or XYZ sequence to a 3-element scale vector."""
+        if isinstance(scale, (int, float)):
+            return [float(scale)] * 3
+        values = list(scale)
+        if len(values) != 3:
+            raise ValueError(f"Mesh scale must be a scalar or length-3 sequence, got {values}")
+        return [float(v) for v in values]

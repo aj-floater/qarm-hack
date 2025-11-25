@@ -10,7 +10,19 @@
       "request": "launch",
       "module": "sim.actual_sim",
       "justMyCode": true,
-      "args": ["--real-time"]
+      "args": [
+        "--real-time",
+        "--base-mesh",
+        "sim/models/pinebase.stl",
+        "--base-collision-mesh",
+        "sim/models/pinebase_collision.stl",
+        "--base-scale",
+        "0.001",
+        "--base-friction",
+        "0.8",
+        "--base-restitution",
+        "0.0"
+      ]
     },
     {
       "name": "Quick Run (run_gui)",
@@ -25,7 +37,22 @@
       "type": "debugpy",
       "request": "launch",
       "module": "sim.panda_viewer",
-      "justMyCode": true
+      "justMyCode": true,
+      "args": [
+        "--base-mesh",
+        "sim/models/pinebase.stl",
+        "--base-collision-mesh",
+        "sim/models/pinebase_collision.stl",
+        "--base-scale",
+        "0.001",
+        "--base-yaw",
+        "180",
+        "--base-friction",
+        "0.8",
+        "--base-restitution",
+        "0.0",
+        "--probe-base-collision"
+      ]
     }
   ]
 }

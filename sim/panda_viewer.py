@@ -48,8 +48,28 @@ from sim.env import QArmSimEnv
 class PhysicsBridge:
     """Thin wrapper around QArmSimEnv for stepping and reading link poses."""
 
-    def __init__(self, time_step: float) -> None:
-        self.env = QArmSimEnv(gui=False, add_ground=False, enable_joint_sliders=False, time_step=time_step)
+    def __init__(
+        self,
+        time_step: float,
+        base_mesh: Path | None,
+        base_collision_mesh: Path | None,
+        base_mesh_scale: float | List[float],
+        base_yaw_deg: float,
+        base_friction: float,
+        base_restitution: float,
+    ) -> None:
+        self.env = QArmSimEnv(
+            gui=False,
+            add_ground=base_mesh is None,
+            enable_joint_sliders=False,
+            time_step=time_step,
+            base_mesh_path=base_mesh,
+            base_collision_mesh_path=base_collision_mesh,
+            base_mesh_scale=base_mesh_scale,
+            base_yaw_deg=base_yaw_deg,
+            base_friction=base_friction,
+            base_restitution=base_restitution,
+        )
         self.env.reset()
         self.client = self.env.client
         self.robot_id = self.env.robot_id
@@ -65,6 +85,65 @@ class PhysicsBridge:
             if lower >= upper:
                 lower, upper = -math.pi, math.pi
             self.joint_meta.append((idx, name, lower, upper))
+
+    def probe_base_collision(self) -> None:
+        """Spawn a small probe and report contacts with the floor to verify collision is active."""
+        if self.env.floor_id is None:
+            print("[PandaViewer] No floor present; skipping collision probe.")
+            return
+
+        # Log the collision shape type/path Bullet sees.
+        shape_data = p.getCollisionShapeData(self.env.floor_id, -1, physicsClientId=self.client)
+        for sd in shape_data:
+            geom_type = sd[2]
+            file_name = sd[4]
+            mesh_scale = sd[3]
+            type_name = {
+                getattr(p, "GEOM_BOX", -1): "BOX",
+                getattr(p, "GEOM_SPHERE", -1): "SPHERE",
+                getattr(p, "GEOM_CAPSULE", -1): "CAPSULE",
+                getattr(p, "GEOM_CYLINDER", -1): "CYLINDER",
+                getattr(p, "GEOM_MESH", -1): "MESH",
+                getattr(p, "GEOM_PLANE", -1): "PLANE",
+                getattr(p, "GEOM_HEIGHTFIELD", -1): "HEIGHTFIELD",
+            }.get(geom_type, str(geom_type))
+            print(
+                "[PandaViewer] Floor collision shape:",
+                f"type={type_name} ({geom_type})",
+                f"file={file_name}",
+                f"scale={mesh_scale}",
+            )
+
+        aabb_min, aabb_max = p.getAABB(self.env.floor_id, -1, physicsClientId=self.client)
+        print("[PandaViewer] Floor AABB:", aabb_min, aabb_max)
+        center = [(a + b) * 0.5 for a, b in zip(aabb_min, aabb_max)]
+        start = [center[0], center[1], aabb_max[2] + 0.2]
+        end = [center[0], center[1], aabb_min[2] - 0.2]
+        ray = p.rayTest(start, end, physicsClientId=self.client)
+        print("[PandaViewer] Ray test hit:", ray)
+
+        col = p.createCollisionShape(p.GEOM_SPHERE, radius=0.015, physicsClientId=self.client)
+        probe = p.createMultiBody(
+            baseMass=0.05,
+            baseCollisionShapeIndex=col,
+            basePosition=[center[0], center[1], aabb_max[2] + 0.05],
+            physicsClientId=self.client,
+        )
+        # Let it fall onto the base.
+        for _ in range(90):
+            p.stepSimulation(physicsClientId=self.client)
+        contacts = p.getContactPoints(bodyA=probe, bodyB=self.env.floor_id, physicsClientId=self.client)
+        print(f"[PandaViewer] Probe contact count with floor: {len(contacts)}")
+        if contacts:
+            c = contacts[0]
+            print(
+                "[PandaViewer] First contact:",
+                f"position={c[5]}",
+                f"normal={c[7]}",
+                f"distance={c[8]}",
+                f"normal_force={c[9]}",
+            )
+        p.removeBody(probe, physicsClientId=self.client)
 
     def step(self) -> None:
         self.env.step()
@@ -98,6 +177,18 @@ class PandaArmViewer(ShowBase):
         self.physics = physics
         self.paused = False
         self.time_step = args.time_step
+        self.base_mesh_path = self._resolve_path(args.base_mesh)
+        self.green_accent_path = self._resolve_path(args.green_accent)
+        self.blue_accent_path = self._resolve_path(args.blue_accent)
+        self.show_base = not args.hide_base
+        self.show_accents = not args.hide_accents
+        self.base_yaw_deg = args.base_yaw
+        # Grid sizing (edit here if you want different spans).
+        self.grid_step = 0.1
+        self.grid_x_neg_cells = 4
+        self.grid_x_pos_cells = 6
+        self.grid_y_neg_cells = 8
+        self.grid_y_pos_cells = 4
 
         self.cam_target = Vec3(0, 0, 0.05)
         self.cam_distance = 0.5
@@ -112,6 +203,7 @@ class PandaArmViewer(ShowBase):
         self.fps_label: DirectLabel | None = None
 
         self._setup_scene()
+        self._setup_static_meshes()
         self._setup_models()
         self._setup_ui()
         self._bind_controls()
@@ -272,17 +364,62 @@ class PandaArmViewer(ShowBase):
         fps = 1.0 / dt
         self.fps_label["text"] = f"FPS: {fps:5.1f}"
 
-    def _create_grid(self, size: float = 0.6, step: float = 0.1) -> None:
+    def _create_grid(self) -> None:
+        """Grid sized by per-axis cell counts and step."""
+        step = self.grid_step
+        size_x_neg = self.grid_x_neg_cells * step
+        size_x_pos = self.grid_x_pos_cells * step
+        size_y_neg = self.grid_y_neg_cells * step
+        size_y_pos = self.grid_y_pos_cells * step
         ls = LineSegs()
         ls.setColor(0.35, 0.35, 0.35, 0.4)
-        for x in frange(-size, size + 1e-6, step):
-            ls.moveTo(x, -size, 0)
-            ls.drawTo(x, size, 0)
-        for y in frange(-size, size + 1e-6, step):
-            ls.moveTo(-size, y, 0)
-            ls.drawTo(size, y, 0)
+        for x in frange(-size_x_neg, size_x_pos + 1e-6, step):
+            ls.moveTo(x, -size_y_neg, 0)
+            ls.drawTo(x, size_y_pos, 0)
+        for y in frange(-size_y_neg, size_y_pos + 1e-6, step):
+            ls.moveTo(-size_x_neg, y, 0)
+            ls.drawTo(size_x_pos, y, 0)
         grid = self.render.attachNewNode(ls.create())
         grid.setTransparency(True)
+
+    def _setup_static_meshes(self) -> None:
+        """Load the pine base and colored accent meshes (visual-only)."""
+        models_dir = Path(__file__).resolve().parent / "models"
+
+        if self.show_base:
+            base_path = Path(self.base_mesh_path) if self.base_mesh_path else models_dir / "pinebase.stl"
+            base_node = self._load_mesh(base_path)
+            base_node.reparentTo(self.render)
+            base_node.setH(self.base_yaw_deg)  # rotate around Z at the origin
+            base_node.setTwoSided(True)
+            mat = Material()
+            # Soft pine-like tint with subtle sheen.
+            diffuse = Vec4(0.82, 0.72, 0.55, 1)
+            mat.setDiffuse(diffuse)
+            mat.setAmbient(diffuse * 0.85)
+            mat.setSpecular(Vec4(0.12, 0.1, 0.08, 1))
+            mat.setShininess(8.0)
+            base_node.setMaterial(mat, 1)
+            base_node.setColor(Vec4(1, 1, 1, 1))
+
+        if self.show_accents:
+            accent_defs = [
+                ("green", self.green_accent_path, Vec4(0.25, 0.75, 0.35, 1)),
+                ("blue", self.blue_accent_path, Vec4(0.2, 0.45, 0.92, 1)),
+            ]
+            for name, override, color in accent_defs:
+                path = Path(override) if override else models_dir / f"{name}accent.stl"
+                node = self._load_mesh(path)
+                node.reparentTo(self.render)
+                node.setH(self.base_yaw_deg)
+                node.setTwoSided(True)
+                mat = Material()
+                mat.setDiffuse(color)
+                mat.setAmbient(color * 0.8)
+                mat.setSpecular(Vec4(0.1, 0.1, 0.1, 1))
+                mat.setShininess(6.0)
+                node.setMaterial(mat, 1)
+                node.setColor(Vec4(1, 1, 1, 1))
 
     def _load_mesh(self, path: Path) -> NodePath:
         try:
@@ -367,6 +504,13 @@ class PandaArmViewer(ShowBase):
         z = radius * math.sin(pitch)
         return Vec3(x, y, z)
 
+    @staticmethod
+    def _resolve_path(value: str | None) -> Path | None:
+        """Return an absolute Path or None for empty values."""
+        if not value:
+            return None
+        return Path(value).expanduser().resolve()
+
 
 def frange(start: float, stop: float, step: float):
     val = start
@@ -378,12 +522,74 @@ def frange(start: float, stop: float, step: float):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Panda3D viewer for the QArm with PyBullet physics.")
     parser.add_argument("--time-step", type=float, default=1.0 / 120.0, help="Physics timestep (seconds).")
+    parser.add_argument("--base-mesh", type=str, default=None, help="Path to pine base mesh (visual).")
+    parser.add_argument("--base-collision-mesh", type=str, default=None, help="Path to collision mesh for the base.")
+    parser.add_argument(
+        "--base-scale",
+        type=float,
+        nargs="+",
+        default=[1.0],
+        help="Uniform or XYZ scale for the base mesh (one value or three values).",
+    )
+    parser.add_argument("--base-yaw", type=float, default=180.0, help="Rotation (degrees about Z) to apply to the base.")
+    parser.add_argument("--base-friction", type=float, default=0.8, help="Lateral friction for the base collision.")
+    parser.add_argument("--base-restitution", type=float, default=0.0, help="Restitution (bounciness) for the base.")
+    parser.add_argument("--green-accent", type=str, default=None, help="Path to green accent mesh (visual).")
+    parser.add_argument("--blue-accent", type=str, default=None, help="Path to blue accent mesh (visual).")
+    parser.add_argument("--hide-base", action="store_true", help="Do not load the pine base mesh.")
+    parser.add_argument("--hide-accents", action="store_true", help="Do not load the accent meshes.")
+    parser.add_argument(
+        "--probe-base-collision",
+        action="store_true",
+        help="Drop a small probe to verify the base collision mesh is active (prints contact info).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    physics = PhysicsBridge(time_step=args.time_step)
+    models_dir = Path(__file__).resolve().parent / "models"
+    default_base = models_dir / "pinebase.stl"
+    default_base_collision = models_dir / "pinebase_collision.stl"
+    scale_arg = args.base_scale
+    if len(scale_arg) == 1:
+        base_scale: float | List[float] = scale_arg[0]
+    elif len(scale_arg) == 3:
+        base_scale = scale_arg
+    else:
+        raise SystemExit("Base scale must be one value (uniform) or three values (XYZ).")
+
+    if args.base_mesh:
+        base_mesh_path = Path(args.base_mesh).expanduser().resolve()
+    elif not args.hide_base and default_base.exists():
+        base_mesh_path = default_base
+    else:
+        base_mesh_path = None
+
+    if args.base_collision_mesh:
+        base_collision_path = Path(args.base_collision_mesh).expanduser().resolve()
+    elif base_mesh_path and default_base_collision.exists():
+        base_collision_path = default_base_collision
+    else:
+        base_collision_path = base_mesh_path
+
+    # Log the chosen assets so it's obvious which collision is active.
+    print("[PandaViewer] base visual mesh:", base_mesh_path)
+    print("[PandaViewer] base collision mesh:", base_collision_path)
+    print("[PandaViewer] base scale:", base_scale)
+    print("[PandaViewer] base yaw:", args.base_yaw)
+    print("[PandaViewer] base friction/restitution:", args.base_friction, args.base_restitution)
+    physics = PhysicsBridge(
+        time_step=args.time_step,
+        base_mesh=base_mesh_path,
+        base_collision_mesh=base_collision_path,
+        base_mesh_scale=base_scale,
+        base_yaw_deg=args.base_yaw,
+        base_friction=args.base_friction,
+        base_restitution=args.base_restitution,
+    )
+    if args.probe_base_collision:
+        physics.probe_base_collision()
     app = PandaArmViewer(physics, args)
     app.run()
 
