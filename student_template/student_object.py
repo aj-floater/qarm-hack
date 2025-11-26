@@ -21,6 +21,8 @@ USE_PANDA_VIEWER = True
 USE_PYBULLET_GUI = False
 # Set True to show joint sliders inside the Panda viewer.
 SHOW_JOINT_SLIDERS = True
+# Set True to force Panda3D to reload STL meshes each launch (bypasses cache).
+RELOAD_MESHES = False
 
 # Preload the bundled Blender monkey so students see a static mesh instantly.
 KINEMATIC_OBJECTS: list[dict[str, object]] = [
@@ -112,6 +114,7 @@ def main() -> None:
             hide_accents=False,
             probe_base_collision=False,
             show_sliders=SHOW_JOINT_SLIDERS,
+            reload_meshes=RELOAD_MESHES,
         )
         physics = PhysicsBridge(
             time_step=arm.env.time_step,

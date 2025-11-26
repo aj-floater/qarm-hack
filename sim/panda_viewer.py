@@ -34,6 +34,7 @@ try:
         DirectionalLight,
         Filename,
         LQuaternionf,
+        LoaderOptions,
         LineSegs,
         NodePath,
         TextNode,
@@ -239,6 +240,7 @@ class PandaArmViewer(ShowBase):
         self.show_base = not args.hide_base
         self.show_accents = not args.hide_accents
         self.show_sliders = getattr(args, "show_sliders", False)
+        self.reload_meshes = getattr(args, "reload_meshes", False)
         self.base_yaw_deg = self.base_assets.yaw_deg
         self.base_mesh_scale = self.base_assets.visual_scale
         # Grid sizing (edit here if you want different spans).
@@ -354,25 +356,89 @@ class PandaArmViewer(ShowBase):
 
     def _setup_models(self) -> None:
         mesh_dir = Path(__file__).resolve().parent / "qarm" / "meshes"
+        # Fallback mesh map if Bullet does not report a visual path for a link.
         mesh_map: Dict[str, List[Path]] = {
             "base_link": [mesh_dir / "base_link.STL"],
             "YAW": [mesh_dir / "YAW.STL"],
             "BICEP": [mesh_dir / "BICEP.STL"],
             "FOREARM": [mesh_dir / "FOREARM.STL"],
-            "END-EFFECTOR": [mesh_dir / "END-EFFECTOR.STL", mesh_dir / "Gripper.stl"],
+            "END-EFFECTOR": [mesh_dir / "END-EFFECTOR.STL"],
+            "GRIPPER_BASE": [mesh_dir / "gripper-base.stl"],
+            "GRIPPER_LINK1A": [mesh_dir / "gripper-link1a.stl"],
         }
 
+        # Pull visual data from Bullet so Panda matches the URDF (mesh path, offset, scale, orientation).
+        link_visuals: Dict[str, List[Tuple[Path, Tuple[float, float, float], Tuple[float, float, float, float], Tuple[float, float, float]]]] = {}  # noqa: E501
+        try:
+            idx_to_name = {idx: name for name, idx in self.link_name_to_index.items()}
+            idx_to_name[-1] = "base_link"  # Bullet uses -1 for the base link
+            shapes = p.getVisualShapeData(self.physics.robot_id, physicsClientId=self.physics.client)
+            for shape in shapes:
+                link_idx = shape[1]
+                name = idx_to_name.get(link_idx)
+                if not name:
+                    continue
+                # shape fields: (objectUniqueId, linkIndex, visualGeometryType, dimensions/scale, filename, localFramePosition, localFrameOrientation, ... )
+                scale = shape[3]
+                filename = shape[4]
+                pos = shape[5]
+                orn = shape[6]
+                path = Path(filename) if filename else None
+                if path is None or not path.exists():
+                    # fall back to mapped mesh if Bullet path missing
+                    for fallback in mesh_map.get(name, []):
+                        if fallback.exists():
+                            path = fallback
+                            break
+                if path is None:
+                    continue
+                link_visuals.setdefault(name, []).append(
+                    (
+                        path,
+                        (pos[0], pos[1], pos[2]),
+                        (orn[3], orn[0], orn[1], orn[2]),  # reorder to w,x,y,z for Panda
+                        (float(scale[0]), float(scale[1]), float(scale[2])),
+                    )
+                )
+        except Exception:
+            link_visuals = {}
+
+        # Ensure we at least have fallback visuals for known links.
         for link, paths in mesh_map.items():
+            if link in link_visuals:
+                continue
+            visuals: List[Tuple[Path, Tuple[float, float, float], Tuple[float, float, float, float], Tuple[float, float, float]]] = []  # noqa: E501
+            for path in paths:
+                if not path.exists():
+                    continue
+                visuals.append(
+                    (
+                        path,
+                        (0.0, 0.0, 0.0),
+                        (1.0, 0.0, 0.0, 0.0),
+                        (1.0, 1.0, 1.0),
+                    )
+                )
+            if visuals:
+                link_visuals[link] = visuals
+
+        for link, visuals in link_visuals.items():
             parent = self.render.attachNewNode(f"{link}_node")
             parent.setShaderAuto(True)
-            for path in paths:
+            for path, pos, quat_wxyz, scale in visuals:
                 node = self._load_mesh(path)
                 node.reparentTo(parent)
+                node.setPos(*pos)
+                node.setQuat(LQuaternionf(*quat_wxyz))
+                # Apply scale; if this is a gripper mesh and the scale is huge (mm units), clamp to 0.001.
+                if link.startswith("GRIPPER") and max(scale) > 0.1:
+                    scale = (0.001, 0.001, 0.001)
+                node.setScale(*scale)
             # Set per-link colors (base dark grey, red accent on YAW) via a material.
             mat = Material()
             if link == "YAW":
                 diffuse = Vec4(0.6, 0.14, 0.14, 1)
-            elif link == "END-EFFECTOR":
+            elif link in {"END-EFFECTOR", "GRIPPER_BASE", "GRIPPER_LINK1A"}:
                 diffuse = Vec4(0.6, 0.14, 0.14, 1)  # make gripper red
             else:
                 diffuse = Vec4(0.12, 0.12, 0.14, 1)
@@ -583,6 +649,9 @@ class PandaArmViewer(ShowBase):
 
     def _load_mesh(self, path: Path) -> NodePath:
         try:
+            if self.reload_meshes:
+                opts = LoaderOptions(LoaderOptions.LFNoCache)
+                return self.loader.loadModel(Filename.fromOsSpecific(str(path)), loaderOptions=opts)
             return self.loader.loadModel(Filename.fromOsSpecific(str(path)))
         except Exception:
             # Fallback to a simple box if the mesh cannot be loaded.
@@ -706,6 +775,11 @@ def parse_args() -> argparse.Namespace:
         "--probe-base-collision",
         action="store_true",
         help="Drop a small probe to verify the base collision mesh is active (prints contact info).",
+    )
+    parser.add_argument(
+        "--reload-meshes",
+        action="store_true",
+        help="Force Panda3D to reload STL meshes (bypass cache) for live mesh edits.",
     )
     return parser.parse_args()
 
