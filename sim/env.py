@@ -57,7 +57,8 @@ class QArmSimEnv:
     DARK_FLOOR_COLOR = (0.1, 0.1, 0.1, 1.0)
     LIGHT_FLOOR_COLOR = (0.8, 0.8, 0.8, 1.0)
     BACKDROP_COLOR = (0.85, 0.85, 0.85, 1.0)
-    HOLD_FORCE = 0.2  # small holding torque to keep joints from flopping when idle.
+    HOLD_FORCE = 1  # small holding torque for light joints.
+    HOLD_FORCE_STRONG = 4  # higher holding torque for primary arm joints.
 
     def __init__(
         self,
@@ -101,6 +102,8 @@ class QArmSimEnv:
         p.setTimeStep(self.time_step, physicsClientId=self.client)
         p.setGravity(0, 0, -9.81, physicsClientId=self.client)
         p.setRealTimeSimulation(1 if self.real_time else 0, physicsClientId=self.client)
+        # Improve grasp behavior by enabling cone friction for contacts.
+        p.setPhysicsEngineParameter(enableConeFriction=1, physicsClientId=self.client)
 
         if self.gui_enabled:
             self._configure_gui()
@@ -172,14 +175,21 @@ class QArmSimEnv:
         ]
 
         # Disable default motor torques so we can drive positions explicitly.
+        hold_forces: list[float] = []
+        strong_joints = {"YAW", "SHOULDER", "ELBOW", "WRIST"}
+        for j in self.movable_joint_indices:
+            name = self.joint_names[j]
+            hold_forces.append(self.HOLD_FORCE_STRONG if name in strong_joints else self.HOLD_FORCE)
+
         p.setJointMotorControlArray(
             self.robot_id,
             jointIndices=self.movable_joint_indices,
             controlMode=p.VELOCITY_CONTROL,
             targetVelocities=[0.0] * len(self.movable_joint_indices),
-            forces=[self.HOLD_FORCE] * len(self.movable_joint_indices),
+            forces=hold_forces,
             physicsClientId=self.client,
         )
+        self._configure_contact_friction()
 
         if self.gui_enabled and self.enable_joint_sliders:
             self._create_joint_sliders()
@@ -359,6 +369,44 @@ class QArmSimEnv:
                 link_index,
                 rgbaColor=color,
                 specularColor=[0.1, 0.1, 0.1],
+                physicsClientId=self.client,
+            )
+
+    def _configure_contact_friction(self) -> None:
+        """Apply higher friction to gripper surfaces to help objects stick when grasped."""
+        if self.robot_id is None:
+            return
+        gripper_links = {
+            "END-EFFECTOR",
+            "GRIPPER_BASE",
+            "GRIPPER_LINK1A",
+            "GRIPPER_LINK1B",
+            "GRIPPER_LINK2A",
+            "GRIPPER_LINK2B",
+        }
+        default_friction = (0.9, 0.01, 0.01)  # lateral, rolling, spinning
+        gripper_friction = (1.8, 0.05, 0.05)
+        # Base link is index -1 in Bullet; give it the default friction.
+        p.changeDynamics(
+            self.robot_id,
+            -1,
+            lateralFriction=default_friction[0],
+            rollingFriction=default_friction[1],
+            spinningFriction=default_friction[2],
+            restitution=0.0,
+            contactProcessingThreshold=0.0,
+            physicsClientId=self.client,
+        )
+        for name, idx in self.link_name_to_index.items():
+            fric = gripper_friction if name in gripper_links else default_friction
+            p.changeDynamics(
+                self.robot_id,
+                idx,
+                lateralFriction=fric[0],
+                rollingFriction=fric[1],
+                spinningFriction=fric[2],
+                restitution=0.0,
+                contactProcessingThreshold=0.0,
                 physicsClientId=self.client,
             )
 
@@ -544,6 +592,15 @@ class QArmSimEnv:
                     )
             except Exception:
                 pass
+        friction_kwargs = {
+            "lateralFriction": 2.0,
+            "restitution": 0.0,
+            "rollingFriction": 0.002,
+            "spinningFriction": 0.002,
+            "contactProcessingThreshold": 0.0,
+            "contactStiffness": 2e5,
+            "contactDamping": 2e3,
+        }
         if mass > 0.0:
             ccd_radius = 0.015  # higher minimum to help very small scaled meshes
             try:
@@ -552,19 +609,13 @@ class QArmSimEnv:
                 ccd_radius = max(ccd_radius, max_dim * 0.7)
             except Exception:
                 pass
-            p.changeDynamics(
-                body_id,
-                -1,
-                lateralFriction=1.6,
-                restitution=0.0,
-                rollingFriction=0.02,
-                spinningFriction=0.02,
-                contactProcessingThreshold=0.0,
-                ccdSweptSphereRadius=ccd_radius,
-                contactStiffness=2e5,
-                contactDamping=2e3,
-                physicsClientId=self.client,
-            )
+            friction_kwargs["ccdSweptSphereRadius"] = ccd_radius
+        p.changeDynamics(
+            body_id,
+            -1,
+            physicsClientId=self.client,
+            **friction_kwargs,
+        )
         self.kinematic_objects.append(
             KinematicObject(
                 body_id=body_id,

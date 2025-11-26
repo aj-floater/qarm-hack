@@ -258,6 +258,8 @@ class PandaArmViewer(ShowBase):
         self._orbit_drag = False
         self._pan_drag = False
         self._last_mouse: Tuple[float, float] | None = None
+        self._gripper_pair_slider: DirectSlider | None = None
+        self._gripper_slider_target_indices: Tuple[int, int] | None = None
 
         self.link_nodes: Dict[str, NodePath] = {}
         self.kinematic_nodes: List[NodePath] = []
@@ -458,14 +460,16 @@ class PandaArmViewer(ShowBase):
         # Position sliders in the top-right corner.
         x = 0.8
         y = 0.85
-        for _, name, lower, upper in self.physics.joint_meta:
+        name_to_idx: Dict[str, int] = {}
+        name_to_limits: Dict[str, Tuple[float, float]] = {}
+        for i, (_, name, lower, upper) in enumerate(self.physics.joint_meta):
             slider = DirectSlider(
                 range=(lower, upper),
                 value=0.0,
                 pageSize=(upper - lower) / 100.0,
                 scale=0.3,
                 pos=(x, 0, y),
-                command=self._on_slider_change,
+                command=self._on_joint_slider_change,
             )
             label = DirectLabel(
                 text=name,
@@ -477,7 +481,41 @@ class PandaArmViewer(ShowBase):
             )
             label.reparentTo(self.aspect2d)
             self.joint_sliders.append(slider)
+            name_to_idx[name] = i
+            name_to_limits[name] = (lower, upper)
             y -= 0.12
+        # Add a combined gripper slider to drive 1A/2A symmetrically.
+        if "GRIPPER_JOINT1A" in name_to_idx and "GRIPPER_JOINT2A" in name_to_idx:
+            limit1_lower, limit1_upper = name_to_limits["GRIPPER_JOINT1A"]
+            limit2_lower, limit2_upper = name_to_limits["GRIPPER_JOINT2A"]
+            grip_limit = min(
+                abs(limit1_lower),
+                abs(limit1_upper),
+                abs(limit2_lower),
+                abs(limit2_upper),
+            )
+            grip_limit = grip_limit if grip_limit > 0 else 0.5
+            self._gripper_slider_target_indices = (
+                name_to_idx["GRIPPER_JOINT1A"],
+                name_to_idx["GRIPPER_JOINT2A"],
+            )
+            self._gripper_pair_slider = DirectSlider(
+                range=(-grip_limit, grip_limit),
+                value=0.0,
+                pageSize=(2 * grip_limit) / 100.0,
+                scale=0.3,
+                pos=(x, 0, y),
+                command=self._on_gripper_slider_change,
+            )
+            label = DirectLabel(
+                text="Gripper (1A/2A)",
+                scale=0.05,
+                pos=(x - 0.45, 0, y + 0.02),
+                frameColor=(0, 0, 0, 0),
+                text_fg=(1, 1, 1, 1),
+                text_align=TextNode.ALeft,
+            )
+            label.reparentTo(self.aspect2d)
 
     def _bind_controls(self) -> None:
         self.accept("escape", self._quit)
@@ -688,9 +726,25 @@ class PandaArmViewer(ShowBase):
             return Vec3(v, v, v)
         if len(vals) >= 3:
             return Vec3(float(vals[0]), float(vals[1]), float(vals[2]))
-        return Vec3(1.0, 1.0, 1.0)
+            return Vec3(1.0, 1.0, 1.0)
 
-    def _on_slider_change(self) -> None:
+    def _on_joint_slider_change(self) -> None:
+        self._apply_slider_targets()
+
+    def _on_gripper_slider_change(self) -> None:
+        if self._gripper_pair_slider is None or self._gripper_slider_target_indices is None:
+            return
+        grip = self._gripper_pair_slider["value"]
+        idx1a, idx2a = self._gripper_slider_target_indices
+        try:
+            # Positive slider closes: 1A goes negative, 2A goes positive (mirrored finger).
+            self.joint_sliders[idx1a]["value"] = -grip
+            self.joint_sliders[idx2a]["value"] = grip
+        except Exception:
+            pass
+        self._apply_slider_targets()
+
+    def _apply_slider_targets(self) -> None:
         values = [slider["value"] for slider in self.joint_sliders]
         self.physics.set_joints(values)
 
@@ -708,6 +762,9 @@ class PandaArmViewer(ShowBase):
         self.physics.home()
         for slider in self.joint_sliders:
             slider["value"] = 0.0
+        if self._gripper_pair_slider is not None:
+            self._gripper_pair_slider["value"] = 0.0
+        self._apply_slider_targets()
 
     def _toggle_pause(self) -> None:
         self.paused = not self.paused
