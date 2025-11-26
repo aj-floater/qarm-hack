@@ -365,6 +365,9 @@ class PandaArmViewer(ShowBase):
             "END-EFFECTOR": [mesh_dir / "END-EFFECTOR.STL"],
             "GRIPPER_BASE": [mesh_dir / "gripper-base.stl"],
             "GRIPPER_LINK1A": [mesh_dir / "gripper-link1a.stl"],
+            "GRIPPER_LINK1B": [mesh_dir / "gripper-link1b.stl"],
+            "GRIPPER_LINK2A": [mesh_dir / "gripper-link2a.stl"],
+            "GRIPPER_LINK2B": [mesh_dir / "gripper-link2b.stl"],
         }
 
         # Pull visual data from Bullet so Panda matches the URDF (mesh path, offset, scale, orientation).
