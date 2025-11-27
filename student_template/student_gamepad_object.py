@@ -64,7 +64,7 @@ for i, offset in enumerate(
 USE_GAMEPAD_CONTROL = True
 GAMEPAD_DEADZONE = 0.1
 # Enable to log raw/processed stick/button values and commanded targets periodically.
-GAMEPAD_DEBUG = True
+GAMEPAD_DEBUG = False
 GAMEPAD_DEBUG_INTERVAL_S = 0.5
 # When True, dump every button state each debug interval.
 GAMEPAD_DEBUG_ALL_BUTTONS = False

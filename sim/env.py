@@ -57,6 +57,8 @@ class QArmSimEnv:
     DARK_FLOOR_COLOR = (0.1, 0.1, 0.1, 1.0)
     LIGHT_FLOOR_COLOR = (0.8, 0.8, 0.8, 1.0)
     BACKDROP_COLOR = (0.85, 0.85, 0.85, 1.0)
+    GRIPPER_RELEASE_THRESHOLD = 0.03  # rad change to treat as intentional gripper motion
+    GRIPPER_RELEASE_TIME = 0.08  # seconds gripper must move past threshold to unlock hoop
     HOLD_FORCE = 1  # small holding torque for light joints.
     HOLD_FORCE_STRONG = 4  # higher holding torque for primary arm joints.
 
@@ -103,11 +105,23 @@ class QArmSimEnv:
         self.link_name_to_index: dict[str, int] = {}
         self.movable_joint_indices: list[int] = []
         self._joint_index_to_pos: dict[int, int] = {}
+        self._robot_link_indices: list[int] = []
         # Joints we want to hold fixed even if commanded (e.g., gripper 1B/2B).
         self._locked_joint_positions: dict[int, float] = {}
         self.locked_joint_indices: list[int] = []
         self._locked_slider_ids: dict[int, int] = {}
         self.kinematic_objects: list[KinematicObject] = []
+        # Grasp/locking helpers
+        self._gripper_b_links: list[int] = []
+        self._gripper_control_indices: list[int] = []
+        self._hoop_body_ids: set[int] = set()
+        self._hoop_contact_timer: dict[int, float] = {}
+        self._active_hoop_constraint: int | None = None
+        self._active_hoop_body: int | None = None
+        self._last_gripper_joint_positions: list[float] | None = None
+        self._gripper_move_timer: float = 0.0
+        self._hoop_collision_disabled: set[int] = set()
+        self._active_hoop_info: dict[str, object] | None = None
 
         p.setTimeStep(self.time_step, physicsClientId=self.client)
         p.setGravity(0, 0, -9.81, physicsClientId=self.client)
@@ -177,6 +191,7 @@ class QArmSimEnv:
             info = p.getJointInfo(self.robot_id, j, physicsClientId=self.client)
             self.joint_names.append(info[1].decode("utf-8"))
             self.link_name_to_index[info[12].decode("utf-8")] = j
+        self._robot_link_indices = [-1] + self.joint_indices
         # Filter out fixed joints for control commands.
         self.movable_joint_indices = [
             j
@@ -186,6 +201,14 @@ class QArmSimEnv:
         self._joint_index_to_pos = {idx: i for i, idx in enumerate(self.movable_joint_indices)}
         # Lock gripper joints 1B/2B so they stay static in the simulation.
         self._lock_joint_by_name({"GRIPPER_JOINT1B", "GRIPPER_JOINT2B"})
+        self._gripper_b_links = [
+            self.link_name_to_index[name]
+            for name in ("GRIPPER_LINK1B", "GRIPPER_LINK2B")
+            if name in self.link_name_to_index
+        ]
+        self._gripper_control_indices = [
+            idx for idx in self.movable_joint_indices if "GRIPPER_JOINT" in self.joint_names[idx]
+        ]
 
         # Disable default motor torques so we can drive positions explicitly.
         hold_forces: list[float] = []
@@ -206,6 +229,7 @@ class QArmSimEnv:
 
         if self.gui_enabled and self.enable_joint_sliders:
             self._create_joint_sliders()
+            self._create_locked_joint_sliders()
 
     def reset(self, home: Sequence[float] | None = None) -> None:
         """
@@ -226,6 +250,7 @@ class QArmSimEnv:
             return
         for _ in range(n):
             p.stepSimulation(physicsClientId=self.client)
+            self._update_hoop_grasp(self.time_step)
 
     def set_joint_positions(self, q: Sequence[float], max_force: float = 5.0) -> None:
         """
@@ -682,6 +707,8 @@ class QArmSimEnv:
                 rgba=color_rgba,
             )
         )
+        if "hoop" in mesh.name.lower():
+            self._hoop_body_ids.add(body_id)
         return body_id
 
     def list_kinematic_objects(self) -> list[KinematicObject]:
@@ -740,6 +767,8 @@ class QArmSimEnv:
         """Reset hoop-like kinematic objects to their original pose if they came from add_kinematic_object."""
         if not getattr(self, "kinematic_objects", None):
             return
+        self._release_hoop_constraint()
+        self._hoop_contact_timer.clear()
         for obj in self.kinematic_objects:
             try:
                 p.resetBasePositionAndOrientation(
@@ -750,6 +779,8 @@ class QArmSimEnv:
                 )
             except Exception:
                 continue
+        self._active_hoop_info = None
+        self._gripper_move_timer = 0.0
 
     @staticmethod
     def _as_vec3(scale: float | Sequence[float]) -> list[float]:
@@ -760,3 +791,176 @@ class QArmSimEnv:
         if len(values) != 3:
             raise ValueError(f"Mesh scale must be a scalar or length-3 sequence, got {values}")
         return [float(v) for v in values]
+
+    # ---------- Hoop grasp/lock helpers ----------
+    def _release_hoop_constraint(self) -> None:
+        if self._active_hoop_constraint is not None:
+            try:
+                p.removeConstraint(self._active_hoop_constraint, physicsClientId=self.client)
+            except Exception:
+                pass
+        if self._active_hoop_body is not None:
+            self._enable_hoop_collision(self._active_hoop_body)
+            # Nudge the hoop slightly out of the gripper to avoid interpenetration after unlock.
+            try:
+                hoop_pos, hoop_orn = p.getBasePositionAndOrientation(
+                    self._active_hoop_body, physicsClientId=self.client
+                )
+                offset_pos = hoop_pos
+                if self._active_hoop_info:
+                    normal = self._active_hoop_info.get("contact_normal", (0.0, 0.0, 1.0))
+                    parent_link = int(self._active_hoop_info.get("parent_link", -1))
+                    parent_local = self._active_hoop_info.get("parent_local")
+                    if parent_local is not None:
+                        if parent_link == -1:
+                            parent_world_pos, parent_world_orn = p.getBasePositionAndOrientation(
+                                self.robot_id, physicsClientId=self.client
+                            )
+                        else:
+                            state = p.getLinkState(
+                                self.robot_id,
+                                parent_link,
+                                computeForwardKinematics=True,
+                                physicsClientId=self.client,
+                            )
+                            parent_world_pos, parent_world_orn = state[4], state[5]
+                        world_contact, _ = p.multiplyTransforms(
+                            parent_world_pos,
+                            parent_world_orn,
+                            parent_local,
+                            [0, 0, 0, 1],
+                        )
+                        nx, ny, nz = normal
+                        norm = math.sqrt(nx * nx + ny * ny + nz * nz)
+                        scale = 0.02 / norm if norm > 1e-6 else 0.0
+                        offset_pos = (
+                            world_contact[0] + nx * scale,
+                            world_contact[1] + ny * scale,
+                            world_contact[2] + nz * scale,
+                        )
+                p.resetBasePositionAndOrientation(
+                    self._active_hoop_body,
+                    offset_pos,
+                    hoop_orn,
+                    physicsClientId=self.client,
+                )
+            except Exception:
+                pass
+        self._active_hoop_constraint = None
+        self._active_hoop_body = None
+        self._active_hoop_info = None
+
+    def _gripper_joint_positions(self) -> list[float]:
+        if not self._gripper_control_indices or self.robot_id is None:
+            return []
+        try:
+            states = p.getJointStates(self.robot_id, self._gripper_control_indices, physicsClientId=self.client)
+            return [s[0] for s in states]
+        except Exception:
+            return []
+
+    def _update_hoop_grasp(self, dt: float) -> None:
+        """Lock a hoop to the gripper if both B links contact it for >0.5s; release on gripper motion."""
+        if not self._hoop_body_ids or not self._gripper_b_links:
+            return
+        # If locked, drop when gripper joints move.
+        current_grip = self._gripper_joint_positions()
+        if self._active_hoop_constraint is not None:
+            if self._last_gripper_joint_positions and current_grip:
+                delta = max(abs(a - b) for a, b in zip(current_grip, self._last_gripper_joint_positions))
+                if delta > self.GRIPPER_RELEASE_THRESHOLD:
+                    self._gripper_move_timer += dt
+                    if self._gripper_move_timer >= self.GRIPPER_RELEASE_TIME:
+                        self._release_hoop_constraint()
+                        self._hoop_contact_timer.clear()
+                        self._gripper_move_timer = 0.0
+                        self._last_gripper_joint_positions = current_grip
+                        return
+                else:
+                    self._gripper_move_timer = 0.0
+            else:
+                self._gripper_move_timer = 0.0
+            self._last_gripper_joint_positions = current_grip
+            return
+        self._last_gripper_joint_positions = current_grip
+        self._gripper_move_timer = 0.0
+
+        for hoop_id in list(self._hoop_body_ids):
+            contacts = p.getContactPoints(bodyA=self.robot_id, bodyB=hoop_id, physicsClientId=self.client)
+            links_hit = {c[3] for c in contacts if c[3] in self._gripper_b_links}
+            if set(self._gripper_b_links).issubset(links_hit) and contacts:
+                self._hoop_contact_timer[hoop_id] = self._hoop_contact_timer.get(hoop_id, 0.0) + dt
+                if self._hoop_contact_timer[hoop_id] >= 0.5:
+                    c = contacts[0]
+                    parent_link = c[3]
+                    child_link = c[4]
+                    pos_on_a = c[5]
+                    pos_on_b = c[6]
+
+                    def body_pose(body_id: int, link_idx: int) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+                        if link_idx == -1:
+                            return p.getBasePositionAndOrientation(body_id, physicsClientId=self.client)
+                        state = p.getLinkState(body_id, link_idx, computeForwardKinematics=True, physicsClientId=self.client)
+                        return state[4], state[5]
+
+                    parent_world_pos, parent_world_orn = body_pose(self.robot_id, parent_link)
+                    child_world_pos, child_world_orn = body_pose(hoop_id, child_link)
+                    inv_parent_pos, inv_parent_orn = p.invertTransform(parent_world_pos, parent_world_orn)
+                    parent_local_pos, parent_local_orn = p.multiplyTransforms(
+                        inv_parent_pos, inv_parent_orn, child_world_pos, child_world_orn
+                    )
+                    parent_local = parent_local_pos
+                    child_local = (0.0, 0.0, 0.0)
+                    try:
+                        cid = p.createConstraint(
+                            parentBodyUniqueId=self.robot_id,
+                            parentLinkIndex=parent_link,
+                            childBodyUniqueId=hoop_id,
+                            childLinkIndex=child_link,
+                            jointType=p.JOINT_FIXED,
+                            jointAxis=[0.0, 0.0, 0.0],
+                            parentFramePosition=parent_local,
+                            parentFrameOrientation=parent_local_orn,
+                            childFramePosition=child_local,
+                            childFrameOrientation=[0.0, 0.0, 0.0, 1.0],
+                            physicsClientId=self.client,
+                        )
+                        p.changeConstraint(cid, maxForce=120.0, physicsClientId=self.client)
+                        self._active_hoop_constraint = cid
+                        self._active_hoop_body = hoop_id
+                        self._active_hoop_info = {
+                            "parent_link": parent_link,
+                            "parent_local": parent_local,
+                            "child_link": child_link,
+                            "child_local": child_local,
+                            "contact_normal": c[7] if len(c) > 7 else (0.0, 0.0, 1.0),
+                        }
+                        self._disable_hoop_collision(hoop_id)
+                    except Exception:
+                        pass
+                    self._hoop_contact_timer[hoop_id] = 0.0
+                    break
+            else:
+                self._hoop_contact_timer[hoop_id] = 0.0
+
+    def _disable_hoop_collision(self, hoop_id: int) -> None:
+        """Disable collisions between the hoop and the robot while locked."""
+        if hoop_id in self._hoop_collision_disabled:
+            return
+        for link_idx in self._robot_link_indices:
+            try:
+                p.setCollisionFilterPair(self.robot_id, hoop_id, link_idx, -1, 0, physicsClientId=self.client)
+            except Exception:
+                continue
+        self._hoop_collision_disabled.add(hoop_id)
+
+    def _enable_hoop_collision(self, hoop_id: int) -> None:
+        """Re-enable collisions once unlocked."""
+        if hoop_id not in self._hoop_collision_disabled:
+            return
+        for link_idx in self._robot_link_indices:
+            try:
+                p.setCollisionFilterPair(self.robot_id, hoop_id, link_idx, -1, 1, physicsClientId=self.client)
+            except Exception:
+                continue
+        self._hoop_collision_disabled.discard(hoop_id)
