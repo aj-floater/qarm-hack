@@ -33,45 +33,30 @@ RELOAD_MESHES = False
 # Step size for gamepad polling / position updates when not using Panda.
 STEP_S = 0.02
 
-# Preload a handful of meshes so you can see objects in the scene immediately.
-KINEMATIC_OBJECTS: list[dict[str, object]] = [
-    {
-        "mesh_path": MODEL_DIR / "hoop.stl",
-        "position": (0.0, -0.3, 0.08),
-        "euler_deg": (0.0, 0.0, 45.0),  # roll, pitch, yaw in degrees
-        "scale": 0.001,
-        "mass": 0.1,
-        "force_convex_for_dynamic": True,
-        "rgba": (0.1, 0.9, 0.1, 1.0),  # bright green hoop
-    },
-    {
-        "mesh_path": MODEL_DIR / "blender_monkey.stl",
-        "position": (0.2, -0.3, 0.08),
-        "euler_deg": (0.0, 0.0, 45.0),
-        "scale": 0.05,
-        "mass": 0.5,
-        "force_convex_for_dynamic": True,
-        "rgba": (0.85, 0.25, 0.25, 1.0),  # red monkey
-    },
-    {
-        "mesh_path": MODEL_DIR / "dog.STL",
-        "position": (0.2, -0.25, 0.08),
-        "euler_deg": (0.0, 0.0, -15.0),
-        "scale": 0.001,
-        "mass": 0.5,
-        "force_convex_for_dynamic": True,
-        "rgba": (0.25, 0.5, 0.95, 1.0),  # blue dog
-    },
-    {
-        "mesh_path": MODEL_DIR / "head.stl",
-        "position": (0.0, -0.5, 0.08),
-        "euler_deg": (0.0, 0.0, 90.0),
-        "scale": 0.003,
-        "mass": 0.5,
-        "force_convex_for_dynamic": True,
-        "rgba": (0.95, 0.8, 0.2, 1.0),  # yellow head
-    },
-]
+# Preload multiple hoops (rings) so you have several to pick/place.
+KINEMATIC_OBJECTS: list[dict[str, object]] = []
+for i, offset in enumerate(
+    [
+        (0.0, -0.30, 0.08),
+        (0.1, -0.35, 0.08),
+        (-0.1, -0.40, 0.08),
+        (0.05, -0.25, 0.08),
+        (-0.05, -0.32, 0.08),
+    ]
+):
+    hue = 0.1 + 0.15 * i
+    color = (0.1 + 0.1 * i, 0.8 - 0.1 * i, 0.3 + 0.05 * i, 1.0)
+    KINEMATIC_OBJECTS.append(
+        {
+            "mesh_path": MODEL_DIR / "hoop.stl",
+            "position": offset,
+            "euler_deg": (0.0, 0.0, 20.0 * i),  # slight spin per hoop
+            "scale": 0.001,
+            "mass": 0.1,
+            "force_convex_for_dynamic": True,
+            "rgba": color,
+        }
+    )
 
 # Controller + teleop defaults.
 USE_GAMEPAD_CONTROL = True
@@ -88,11 +73,19 @@ JOYSTICK_AXES = {
     # Use the right trigger for the gripper; adjust index if your controller differs.
     "right_trigger": 5,
 }
+TRIGGER_DEADZONE = 0.02
 # Map stick extremes directly to joint angles (±360 deg here; clamped to URDF limits).
 JOINT_TARGET_RANGE_RAD = {
     "yaw": math.radians(360.0),
     "shoulder": math.radians(360.0),
     "elbow": math.radians(360.0),
+}
+# Optional per-joint overrides for min/max angles (radians). Leave empty to use URDF limits.
+JOINT_LIMIT_OVERRIDES: dict[str, tuple[float, float]] = {
+    "yaw": (math.radians(-120.0), math.radians(30.0)),  # -120° to +30°
+    "shoulder": (math.radians(0.0), math.radians(90.0)),  # 0° to +90°
+    "gripper_joint1a": (math.radians(10.0), math.radians(-60.0)),  # -20° to +60°
+    "gripper_joint2a": (math.radians(-10.0), math.radians(60.0)),  # -20° to +60°
 }
 GRIPPER_TARGET_RANGE_RAD = math.radians(120.0)  # symmetric +/- clamp, inverted on one finger to close
 MAX_GRIPPER_RANGE_RAD = 1.2  # safety clamp if limits unavailable.
@@ -148,6 +141,7 @@ class XboxController:
         self.deadzone = float(deadzone)
         self.axis_map = dict(axis_map)
         self.zero_offsets: dict[str, float] = {}
+        self._last_trigger_value: float = 0.0
         pygame.init()
         pygame.joystick.init()
         if pygame.joystick.get_count() == 0:
@@ -199,13 +193,16 @@ class XboxController:
         rx, ry = centered["right_x"], -centered["right_y"]
         lx_sq, ly_sq = square_stick(lx, ly, self.deadzone)
         rx_sq, ry_sq = square_stick(rx, ry, self.deadzone)
+        trig_raw = raw.get("right_trigger", 0.0)
+        trig_mapped = max(0.0, min(1.0, (trig_raw + 1.0) * 0.5))
+        self._last_trigger_value = 0.0 if trig_mapped < TRIGGER_DEADZONE else trig_mapped
         return StickAxes(left_x=lx_sq, left_y=ly_sq, right_x=rx_sq, right_y=ry_sq)
 
     def gripper_input(self) -> float | None:
         """Return gripper axis input if mapped (e.g., right trigger), else None."""
         if "right_trigger" not in self.axis_map:
             return None
-        return self._axis("right_trigger")
+        return self._last_trigger_value
 
 
 class GamepadTeleop:
@@ -240,6 +237,17 @@ class GamepadTeleop:
             if lower >= upper:
                 lower, upper = -math.pi, math.pi
             limits[pos] = (lower, upper)
+        # Apply any user overrides keyed by joint name (case-insensitive).
+        for name, bounds in JOINT_LIMIT_OVERRIDES.items():
+            if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+                continue
+            pos = self.name_to_idx.get(name.lower())
+            if pos is None:
+                continue
+            lo, hi = float(bounds[0]), float(bounds[1])
+            if lo > hi:
+                lo, hi = hi, lo
+            limits[pos] = (lo, hi)
         return limits
 
     def _select_gripper_indices(self) -> list[int]:

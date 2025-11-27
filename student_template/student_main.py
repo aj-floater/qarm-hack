@@ -65,11 +65,19 @@ JOYSTICK_AXES = {
     # Use the right trigger for the gripper; adjust index if your controller differs.
     "right_trigger": 5,
 }
+TRIGGER_DEADZONE = 0.02
 # Map stick extremes directly to joint angles (±360 deg here; clamped to URDF limits).
 JOINT_TARGET_RANGE_RAD = {
     "yaw": math.radians(360.0),
     "shoulder": math.radians(360.0),
     "elbow": math.radians(360.0),
+}
+# Optional per-joint overrides for min/max angles (radians). Leave empty to use URDF limits.
+JOINT_LIMIT_OVERRIDES: dict[str, tuple[float, float]] = {
+    "yaw": (math.radians(-120.0), math.radians(30.0)),  # -120° to +30°
+    "shoulder": (math.radians(0.0), math.radians(90.0)),  # 0° to +90°
+    "gripper_joint1a": (math.radians(-20.0), math.radians(60.0)),  # -20° to +60°
+    "gripper_joint2a": (math.radians(-20.0), math.radians(60.0)),  # -20° to +60°
 }
 GRIPPER_TARGET_RANGE_RAD = math.radians(120.0)  # symmetric +/- clamp, inverted on one finger to close
 MAX_GRIPPER_RANGE_RAD = 1.2  # safety clamp if limits unavailable.
@@ -125,6 +133,7 @@ class XboxController:
         self.deadzone = float(deadzone)
         self.axis_map = dict(axis_map)
         self.zero_offsets: dict[str, float] = {}
+        self._last_trigger_value: float = 0.0
         pygame.init()
         pygame.joystick.init()
         if pygame.joystick.get_count() == 0:
@@ -176,13 +185,17 @@ class XboxController:
         rx, ry = centered["right_x"], -centered["right_y"]
         lx_sq, ly_sq = square_stick(lx, ly, self.deadzone)
         rx_sq, ry_sq = square_stick(rx, ry, self.deadzone)
+        # Trigger is typically -1 at rest, +1 when fully pressed; map to [0, 1].
+        trig_raw = raw.get("right_trigger", 0.0)
+        trig_mapped = max(0.0, min(1.0, (trig_raw + 1.0) * 0.5))
+        self._last_trigger_value = 0.0 if trig_mapped < TRIGGER_DEADZONE else trig_mapped
         return StickAxes(left_x=lx_sq, left_y=ly_sq, right_x=rx_sq, right_y=ry_sq)
 
     def gripper_input(self) -> float | None:
         """Return gripper axis input if mapped (e.g., right trigger), else None."""
         if "right_trigger" not in self.axis_map:
             return None
-        return self._axis("right_trigger")
+        return self._last_trigger_value
 
 
 class GamepadTeleop:
@@ -217,6 +230,17 @@ class GamepadTeleop:
             if lower >= upper:
                 lower, upper = -math.pi, math.pi
             limits[pos] = (lower, upper)
+        # Apply any user overrides keyed by joint name (case-insensitive).
+        for name, bounds in JOINT_LIMIT_OVERRIDES.items():
+            if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+                continue
+            pos = self.name_to_idx.get(name.lower())
+            if pos is None:
+                continue
+            lo, hi = float(bounds[0]), float(bounds[1])
+            if lo > hi:
+                lo, hi = hi, lo
+            limits[pos] = (lo, hi)
         return limits
 
     def _select_gripper_indices(self) -> list[int]:

@@ -102,6 +102,11 @@ class QArmSimEnv:
         self.joint_names: list[str] = []
         self.link_name_to_index: dict[str, int] = {}
         self.movable_joint_indices: list[int] = []
+        self._joint_index_to_pos: dict[int, int] = {}
+        # Joints we want to hold fixed even if commanded (e.g., gripper 1B/2B).
+        self._locked_joint_positions: dict[int, float] = {}
+        self.locked_joint_indices: list[int] = []
+        self._locked_slider_ids: dict[int, int] = {}
         self.kinematic_objects: list[KinematicObject] = []
 
         p.setTimeStep(self.time_step, physicsClientId=self.client)
@@ -178,6 +183,9 @@ class QArmSimEnv:
             for j in self.joint_indices
             if p.getJointInfo(self.robot_id, j, physicsClientId=self.client)[2] != p.JOINT_FIXED
         ]
+        self._joint_index_to_pos = {idx: i for i, idx in enumerate(self.movable_joint_indices)}
+        # Lock gripper joints 1B/2B so they stay static in the simulation.
+        self._lock_joint_by_name({"GRIPPER_JOINT1B", "GRIPPER_JOINT2B"})
 
         # Disable default motor torques so we can drive positions explicitly.
         hold_forces: list[float] = []
@@ -229,11 +237,17 @@ class QArmSimEnv:
             raise RuntimeError("No arm loaded in the simulation.")
         if len(q) != len(self.movable_joint_indices):
             raise ValueError(f"Expected {len(self.movable_joint_indices)} joints, got {len(q)}")
+        targets = list(q)
+        for idx, lock_val in self._locked_joint_positions.items():
+            pos = self._joint_index_to_pos.get(idx)
+            if pos is None or pos >= len(targets):
+                continue
+            targets[pos] = lock_val
         p.setJointMotorControlArray(
             self.robot_id,
             jointIndices=self.movable_joint_indices,
             controlMode=p.POSITION_CONTROL,
-            targetPositions=list(q),
+            targetPositions=targets,
             forces=[max_force] * len(self.movable_joint_indices),
             physicsClientId=self.client,
         )
@@ -280,6 +294,20 @@ class QArmSimEnv:
                 startValue=0.0,
             )
             self._joint_slider_ids.append(slider_id)
+
+    def _create_locked_joint_sliders(self) -> None:
+        """Expose sliders for locked joints so their fixed angle can be adjusted."""
+        if not self._locked_joint_positions:
+            return
+        for idx, locked_val in self._locked_joint_positions.items():
+            name = self.joint_names[idx]
+            slider_id = p.addUserDebugParameter(
+                paramName=f"{name} (locked rad)",
+                rangeMin=-3.14159,
+                rangeMax=3.14159,
+                startValue=float(locked_val),
+            )
+            self._locked_slider_ids[idx] = slider_id
 
     def _create_floor(self, enable_collision: bool) -> int:
         """Create a translucent base plane to provide spatial reference."""
@@ -643,6 +671,53 @@ class QArmSimEnv:
     def list_kinematic_objects(self) -> list[KinematicObject]:
         """Return a shallow copy of the currently spawned kinematic meshes."""
         return list(self.kinematic_objects)
+
+    def _lock_joint_by_name(self, names: set[str]) -> None:
+        """Record the current position of any movable joints whose names appear in `names`."""
+        if not names or self.robot_id is None:
+            return
+        for idx in self.movable_joint_indices:
+            name = self.joint_names[idx]
+            if name not in names:
+                continue
+            try:
+                state = p.getJointState(self.robot_id, idx, physicsClientId=self.client)
+                lock_val = state[0]
+            except Exception:
+                lock_val = 0.0
+            self._locked_joint_positions[idx] = lock_val
+            if idx not in self.locked_joint_indices:
+                self.locked_joint_indices.append(idx)
+
+    # -------- Locked joint helpers (used by GUI overlays/viewers) --------
+    def locked_joint_info(self) -> list[tuple[int, str, float, float, float]]:
+        """Return locked joint metadata: (index, name, lower, upper, value)."""
+        info_list: list[tuple[int, str, float, float, float]] = []
+        if self.robot_id is None:
+            return info_list
+        for idx in self.locked_joint_indices:
+            try:
+                info = p.getJointInfo(self.robot_id, idx, physicsClientId=self.client)
+                lower, upper = info[8], info[9]
+                if lower >= upper:
+                    lower, upper = -math.pi, math.pi
+                state = p.getJointState(self.robot_id, idx, physicsClientId=self.client)
+                val = state[0]
+            except Exception:
+                lower, upper, val = -math.pi, math.pi, 0.0
+            info_list.append((idx, self.joint_names[idx], lower, upper, val))
+        return info_list
+
+    def set_locked_joint_value(self, joint_idx: int, value: float) -> None:
+        """Update a locked joint's hold position."""
+        if joint_idx not in self.locked_joint_indices:
+            return
+        val = float(value)
+        self._locked_joint_positions[joint_idx] = val
+        try:
+            p.resetJointState(self.robot_id, joint_idx, val, physicsClientId=self.client)
+        except Exception:
+            pass
 
     @staticmethod
     def _as_vec3(scale: float | Sequence[float]) -> list[float]:

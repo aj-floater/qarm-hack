@@ -25,7 +25,8 @@ Edit the defaults near the top of `student_main.py` if you want a longer run, di
 - Plug in/pair your controller and run `python -m student_template.student_main`.
 - Default mapping: left stick X → yaw, left stick Y → shoulder, right stick Y → elbow, right trigger → gripper (1A/2A). Stick inputs are square-bounded so diagonals still hit full range.
 - Stick extremes map to absolute angles (center = 0 rad; edges ≈ ±360° for arm joints, ≈ ±120° for the gripper, clamped to URDF limits). One gripper side is inverted so positive X closes the jaws symmetrically.
-- Tweak `USE_GAMEPAD_CONTROL`, `JOYSTICK_AXES`, `JOINT_TARGET_RANGE_RAD`, `GRIPPER_TARGET_RANGE_RAD`, and `GAMEPAD_DEADZONE` near the top of `student_main.py` if your axis order differs or you want different ranges.
+- Current overrides: yaw -120° to +30°, shoulder 0° to +90°, gripper (1A/2A) -20° to +60°. Tweak `JOINT_LIMIT_OVERRIDES` near the top of `student_main.py` if you want different ranges/limits (leave elbow untouched to use URDF).
+- Tweak `USE_GAMEPAD_CONTROL`, `JOYSTICK_AXES`, `JOINT_TARGET_RANGE_RAD`, `GRIPPER_TARGET_RANGE_RAD`, and `GAMEPAD_DEADZONE` near the top of `student_main.py` if your axis order differs or you want different ranges/limits.
 - Want the same teleop plus preloaded meshes? Try `python -m student_template.student_gamepad_object`, a gamepad-enabled clone of `student_object.py` that spawns the hoop/monkey/dog/head meshes.
 
 ## API

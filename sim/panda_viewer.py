@@ -136,6 +136,13 @@ class PhysicsBridge:
             if lower >= upper:
                 lower, upper = -math.pi, math.pi
             self.joint_meta.append((idx, name, lower, upper))
+        # Locked joints (e.g., gripper 1B/2B) exposed for manual tweaking.
+        self.locked_joint_meta: List[Tuple[int, str, float, float, float]] = []
+        if hasattr(self.env, "locked_joint_info"):
+            try:
+                self.locked_joint_meta = list(self.env.locked_joint_info())  # type: ignore[arg-type]
+            except Exception:
+                self.locked_joint_meta = []
 
     def probe_base_collision(self) -> None:
         """Spawn a small probe and report contacts with the floor to verify collision is active."""
@@ -206,6 +213,14 @@ class PhysicsBridge:
         if len(values) != len(self.joint_order):
             raise ValueError(f"Expected {len(self.joint_order)} joint values, got {len(values)}")
         self.env.set_joint_positions(values)
+
+    def set_locked_joint(self, joint_idx: int, value: float) -> None:
+        """Update a locked joint hold position if supported by the env."""
+        if hasattr(self.env, "set_locked_joint_value"):
+            try:
+                self.env.set_locked_joint_value(joint_idx, value)  # type: ignore[arg-type]
+            except Exception:
+                pass
 
     def _link_pose(self, body_id: int, link_idx: int) -> Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]:
         if link_idx == -1:
@@ -327,6 +342,7 @@ class PandaArmViewer(ShowBase):
         self.kinematic_nodes: List[NodePath] = []
         self.kinematic_body_nodes: List[Tuple[int, NodePath]] = []
         self.joint_sliders: List[DirectSlider] = []
+        self.locked_sliders: List[Tuple[int, DirectSlider]] = []
         self.fps_label: DirectLabel | None = None
         self.filters: CommonFilters | None = None
 
@@ -578,6 +594,30 @@ class PandaArmViewer(ShowBase):
                 text_align=TextNode.ALeft,
             )
             label.reparentTo(self.aspect2d)
+            y -= 0.12
+
+        # Sliders for locked joints (e.g., gripper 1B/2B) so users can adjust their fixed pose.
+        if self.physics.locked_joint_meta:
+            for joint_idx, name, lower, upper, val in self.physics.locked_joint_meta:
+                slider = DirectSlider(
+                    range=(lower, upper),
+                    value=val,
+                    pageSize=(upper - lower) / 100.0,
+                    scale=0.3,
+                    pos=(x, 0, y),
+                    command=self._on_locked_slider_change,
+                )
+                label = DirectLabel(
+                    text=f"{name} (locked)",
+                    scale=0.05,
+                    pos=(x - 0.45, 0, y + 0.02),
+                    frameColor=(0, 0, 0, 0),
+                    text_fg=(1, 1, 1, 1),
+                    text_align=TextNode.ALeft,
+                )
+                label.reparentTo(self.aspect2d)
+                self.locked_sliders.append((joint_idx, slider))
+                y -= 0.12
 
     def _bind_controls(self) -> None:
         self.accept("escape", self._quit)
@@ -809,9 +849,22 @@ class PandaArmViewer(ShowBase):
             pass
         self._apply_slider_targets()
 
+    def _on_locked_slider_change(self) -> None:
+        # Push locked joint slider values into the physics backend.
+        for joint_idx, slider in self.locked_sliders:
+            try:
+                self.physics.set_locked_joint(joint_idx, slider["value"])
+            except Exception:
+                continue
+
     def _apply_slider_targets(self) -> None:
         values = [slider["value"] for slider in self.joint_sliders]
         self.physics.set_joints(values)
+        for joint_idx, slider in self.locked_sliders:
+            try:
+                self.physics.set_locked_joint(joint_idx, slider["value"])
+            except Exception:
+                continue
 
     def _zoom(self, delta: float) -> None:
         self.cam_distance = max(0.1, self.cam_distance + delta)
