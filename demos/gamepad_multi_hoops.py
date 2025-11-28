@@ -28,15 +28,16 @@ HOOP_COLLISION_SEGMENTS = {
     "count": 12,
 }
 HOOP_MATERIAL = {
-    # Higher frictions and damping help hoops settle upright instead of rolling to odd angles.
-    "lateral_friction": 0.8,
-    "rolling_friction": 0.2,
-    "spinning_friction": 0.2,
+    # Very low frictions + softer contacts so gravity can tip the hoops over.
+    "lateral_friction": 0.12,
+    "rolling_friction": 0.0,
+    "spinning_friction": 0.0,
     "restitution": 0.0,
-    "contact_stiffness": 1.2e5,
-    "contact_damping": 1.0e4,
+    "contact_stiffness": 8.0e3,
+    "contact_damping": 3.0e2,
 }
 HOOP_POSITIONS = [(0.0, -0.30, 0.08), (0.1, -0.35, 0.08), (-0.1, -0.40, 0.08), (0.23, -0.25, 0.08)]
+HOOP_TILT_DEG = 3.0  # small roll to break perfect balance so gravity makes them fall
 HOOP_COLOR = (0.15, 0.85, 0.3, 1.0)
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -123,7 +124,8 @@ def add_hoops(arm: QArmBase) -> list[int]:
         hoop_id = env.add_kinematic_object(
             mesh_path=hoop_mesh,
             position=pos,
-            orientation_euler_deg=(0.0, 0.0, 20.0),
+            # Add a small roll tilt so gravity will tip the hoop off its edge.
+            orientation_euler_deg=(HOOP_TILT_DEG, 0.0, 20.0),
             scale=0.001,
             collision_segments=HOOP_COLLISION_SEGMENTS,
             mass=0.1,
