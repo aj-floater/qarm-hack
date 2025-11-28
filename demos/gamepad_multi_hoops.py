@@ -1,4 +1,9 @@
-"""Gamepad teleop with multiple segmented hoops (sliders + labels). Run: python -m demos.gamepad_multi_hoops"""
+"""Gamepad teleop with multiple segmented hoops (sliders + labels).
+
+Run: ``python -m demos.gamepad_multi_hoops``
+Set ``MODE = "hardware"`` + ``MIRROR_SIM_WHEN_HARDWARE = True`` to drive the
+real arm while keeping the simulation/viewer in sync.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +19,8 @@ from common.qarm_base import QArmBase
 from demos._shared import run_with_viewer
 
 # ---- user settings ----
+MODE = "sim"  # change to "hardware" to drive the real arm
+MIRROR_SIM_WHEN_HARDWARE = True  # keep the simulation/viewer running alongside hardware
 USE_PANDA_VIEWER = True
 USE_PYBULLET_GUI = False
 STEP_S = 0.02
@@ -269,7 +276,15 @@ def start_live_hoop_labels(arm: QArmBase, hoop_ids: list[int], stop_event: threa
 
 def main() -> None:
     auto_step = not USE_PANDA_VIEWER
-    arm = make_qarm(mode="sim", gui=USE_PYBULLET_GUI, real_time=False, auto_step=auto_step)
+    mirror_sim = MIRROR_SIM_WHEN_HARDWARE and MODE.lower() == "hardware"
+    arm = make_qarm(
+        mode=MODE,
+        gui=USE_PYBULLET_GUI,
+        real_time=False,
+        auto_step=auto_step,
+        mirror_sim=mirror_sim,
+    )
+    print(f"[GamepadHoops] Mode: {MODE} (mirror sim: {'on' if mirror_sim else 'off'})")
     arm.home()
     lock_gripper_b_joints(getattr(arm, "env", None))
     hoop_ids = add_hoops(arm)
