@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
+import pybullet as p
 
 from api.factory import make_qarm
 from common.qarm_base import QArmBase
@@ -434,11 +435,12 @@ def add_kinematic_objects(arm: QArmBase, objects: list[dict[str, object]]) -> No
     Pass a list of dicts shaped like KINEMATIC_OBJECTS above.
     """
     if not objects:
-        return
+        return []
     env = getattr(arm, "env", None)
     if env is None or not hasattr(env, "add_kinematic_object"):
         print("[Student] Current QArm backend does not support kinematic objects.")
-        return
+        return []
+    added: list[tuple[int, dict[str, object]]] = []
     for obj in objects:
         # Push student-provided values with safe defaults for everything else.
         body_id = env.add_kinematic_object(
@@ -455,6 +457,121 @@ def add_kinematic_objects(arm: QArmBase, objects: list[dict[str, object]]) -> No
             orientation_euler_deg=obj.get("euler_deg"),
         )
         print(f"[Student] Added kinematic mesh {obj['mesh_path']} (body_id={body_id})")
+        added.append((body_id, obj))
+    return added
+
+
+def add_hoop_labels(arm: QArmBase, objects: list[tuple[int, dict[str, object]]]) -> list[dict[str, int]]:
+    """
+    Drop a label at the centroid of each hoop. Labels turn green when locked, red otherwise.
+    """
+    if not objects:
+        return []
+    env = getattr(arm, "env", None)
+    if env is None or not hasattr(env, "add_point_label"):
+        print("[Student] Current QArm backend does not support point labels.")
+        return []
+    labels: list[dict[str, int]] = []
+    for idx, (body_id, obj) in enumerate(objects):
+        mesh_path = obj.get("mesh_path")
+        name_guess = Path(mesh_path).stem if mesh_path else f"Hoop {idx+1}"
+        if "hoop" not in str(name_guess).lower():
+            continue
+        pos = obj.get("position", (0.0, 0.0, 0.0))
+        unlocked_color = (1.0, 0.35, 0.35, 1.0)
+        locked_color = (0.35, 1.0, 0.4, 1.0)
+        label_id = env.add_point_label(
+            name=name_guess,
+            position=pos,
+            color=unlocked_color,
+            text_scale=0.022,
+            marker_scale=0.08,
+            show_coords=False,
+        )
+        labels.append(
+            {
+                "body_id": body_id,
+                "label_id": label_id,
+                "locked_color": locked_color,
+                "unlocked_color": unlocked_color,
+            }
+        )
+        print(f"[Student] Added hoop label '{name_guess}' (body_id={body_id}, label_id={label_id})")
+    return labels
+
+
+def _update_label(env, label_id: int, *, color: tuple[float, float, float, float] | None = None, position=None) -> None:
+    """Update a point label via the env helper."""
+    if not hasattr(env, "update_point_label"):
+        return
+    try:
+        env.update_point_label(label_id, color=color, position=position)
+    except Exception:
+        pass
+
+
+def hoop_label_update_loop(env, hoop_labels: list[dict[str, int]], stop_event: threading.Event, interval_s: float = 0.05) -> None:
+    """Continuously reflect the locked hoop by tinting its label green; others red."""
+    if not hoop_labels:
+        return
+    client = getattr(env, "client", None)
+    while not stop_event.wait(interval_s):
+        active_id = None
+        if hasattr(env, "get_active_hoop_info"):
+            try:
+                info = env.get_active_hoop_info()
+                active_id = info.get("hoop_body_id") if info else None
+            except Exception:
+                active_id = None
+        for entry in hoop_labels:
+            locked_color = entry.get("locked_color", (0.35, 1.0, 0.4, 1.0))
+            unlocked_color = entry.get("unlocked_color", (1.0, 0.35, 0.35, 1.0))
+            color = locked_color if entry["body_id"] == active_id else unlocked_color
+            pos = None
+            try:
+                pos, _ = p.getBasePositionAndOrientation(entry["body_id"], physicsClientId=client)
+            except Exception:
+                pos = None
+            _update_label(env, entry["label_id"], color=color, position=pos)
+
+
+def start_link_label_tracker(arm: QArmBase, link_name: str = "GRIPPER_LINK1B") -> tuple[threading.Event, threading.Thread, int] | None:
+    """
+    Spawn a background thread that keeps a label pinned to the centroid of a link.
+    Defaults to GRIPPER_LINK1B. Returns (stop_event, thread, label_id).
+    """
+    env = getattr(arm, "env", None)
+    if env is None or not hasattr(env, "add_point_label") or not hasattr(env, "update_point_label"):
+        print("[Student] Env does not support live labels.")
+        return None
+    link_idx = env.link_name_to_index.get(link_name)
+    if link_idx is None:
+        print(f"[Student] Link not found: {link_name}")
+        return None
+    label_id = env.add_point_label(
+        name=f"{link_name} centroid",
+        position=(0.0, 0.0, 0.0),
+        color=(0.2, 0.8, 1.0, 1.0),
+        text_scale=0.02,
+        marker_scale=0.06,
+        show_coords=False,
+    )
+    client = getattr(env, "client", None)
+    stop_event = threading.Event()
+
+    def _loop() -> None:
+        while not stop_event.wait(0.02):
+            try:
+                state = p.getLinkState(env.robot_id, link_idx, computeForwardKinematics=True, physicsClientId=client)
+                pos = state[4]
+                env.update_point_label(label_id, position=pos)
+            except Exception:
+                continue
+
+    thread = threading.Thread(target=_loop, daemon=True)
+    thread.start()
+    print(f"[Student] Tracking label {label_id} on {link_name} (link idx {link_idx})")
+    return stop_event, thread, label_id
 
 
 def add_point_labels(arm: QArmBase, labels: list[dict[str, object]]) -> None:
@@ -491,12 +608,16 @@ def main() -> None:
 
     arm = make_qarm(mode="sim", gui=use_pybullet_gui, real_time=real_time, auto_step=auto_step)
     arm.home()
-    add_kinematic_objects(arm, KINEMATIC_OBJECTS)
+    hoop_objects = add_kinematic_objects(arm, KINEMATIC_OBJECTS)
+    hoop_labels = add_hoop_labels(arm, hoop_objects)
+    link_label_tracker = start_link_label_tracker(arm, "GRIPPER_LINK1B")
     add_point_labels(arm, POINT_LABELS)
     time.sleep(0.1)
 
     stop_event = threading.Event()
     motion_thread: threading.Thread | None = None
+    hoop_label_thread: threading.Thread | None = None
+    link_label_thread: threading.Thread | None = None
 
     def launch_viewer() -> None:
         from sim.panda_viewer import PandaArmViewer, PhysicsBridge
@@ -518,6 +639,21 @@ def main() -> None:
         app.run()
 
     try:
+        if hoop_labels:
+            hoop_label_thread = threading.Thread(
+                target=hoop_label_update_loop,
+                args=(arm.env, hoop_labels, stop_event),
+                daemon=True,
+            )
+            hoop_label_thread.start()
+        if link_label_tracker:
+            stop_event_link, thread_link, _ = link_label_tracker
+            link_label_thread = thread_link
+            # tie shutdown to main stop_event
+            def _link_stop_watcher() -> None:
+                stop_event.wait()
+                stop_event_link.set()
+            threading.Thread(target=_link_stop_watcher, daemon=True).start()
         if use_panda_viewer:
             if USE_GAMEPAD_CONTROL:
                 motion_thread = threading.Thread(
@@ -546,6 +682,12 @@ def main() -> None:
             if motion_thread is not None and motion_thread.is_alive():
                 stop_event.set()
                 motion_thread.join(timeout=1.0)
+            if hoop_label_thread is not None and hoop_label_thread.is_alive():
+                stop_event.set()
+                hoop_label_thread.join(timeout=1.0)
+            if link_label_thread is not None and link_label_thread.is_alive():
+                stop_event.set()
+                link_label_thread.join(timeout=1.0)
             arm.home()
         except Exception:
             pass

@@ -830,6 +830,40 @@ class QArmSimEnv:
         self.point_labels.clear()
         self._point_label_counter = 0
 
+    def update_point_label(
+        self,
+        label_id: int,
+        *,
+        position: Sequence[float] | None = None,
+        color: Sequence[float] | None = None,
+        name: str | None = None,
+        text_scale: float | None = None,
+        marker_scale: float | None = None,
+        show_coords: bool | None = None,
+    ) -> bool:
+        """
+        Mutate an existing point label (position, color, name, scales, show_coords).
+
+        Returns True if the label was found and updated.
+        """
+        for lbl in self.point_labels:
+            if getattr(lbl, "label_id", None) != label_id:
+                continue
+            if position is not None:
+                lbl.position = tuple(self._coerce_xyz(position))
+            if color is not None:
+                lbl.color_rgba = self._coerce_rgba(color, default=lbl.color_rgba)
+            if name is not None:
+                lbl.name = str(name)
+            if text_scale is not None:
+                lbl.text_scale = max(0.001, float(text_scale))
+            if marker_scale is not None:
+                lbl.marker_scale = max(0.001, float(marker_scale))
+            if show_coords is not None:
+                lbl.show_coords = bool(show_coords)
+            return True
+        return False
+
     def list_point_labels(self) -> list[PointLabel]:
         """Return a shallow copy of stored point labels."""
         return list(self.point_labels)

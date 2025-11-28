@@ -1003,6 +1003,7 @@ class PandaArmViewer(ShowBase):
         txt_node.setText(self._format_label_text(label))
         txt_node.setTextColor(color)
         marker.setColor(color)
+        marker.setColorScale(color)  # ensure crosshair tint updates even with vertex colors
         marker.setScale(max(0.005, label.marker_scale))
         root.setPos(label.position[0], label.position[1], label.position[2])
 
