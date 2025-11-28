@@ -71,6 +71,7 @@ class SimQArm(QArmBase):
         self._open_angle = 0.0
         self._closed_angle = min(0.55, self._gripper_angle_limits[1])
         self._gripper_motion_state: str = "idle"
+        self._last_full_targets: list[float] | None = None
 
     def home(self) -> None:
         """Reset the arm to its configured home pose."""
@@ -79,6 +80,7 @@ class SimQArm(QArmBase):
             pos = self._env_index_to_pos[idx]
             full_home[pos] = angle
         self.env.reset(full_home)
+        self._last_full_targets = list(full_home)
         self._maybe_step()
 
     def set_joint_positions(self, q: Sequence[float]) -> None:
@@ -93,6 +95,7 @@ class SimQArm(QArmBase):
         for idx, angle in zip(self.joint_order, targets):
             pos = self._env_index_to_pos[idx]
             full_targets[pos] = angle
+        self._last_full_targets = list(full_targets)
         self.env.set_joint_positions(full_targets)
         self._maybe_step()
 
@@ -107,6 +110,40 @@ class SimQArm(QArmBase):
     def close_gripper(self) -> None:
         """Close the gripper to the default closed angle."""
         self.set_gripper_position(self._closed_angle)
+
+    def set_gripper_positions(self, angles: Sequence[float] | float) -> None:
+        """
+        Drive the gripper with explicit joint targets.
+
+        Accepts either a single symmetric gripper angle (mirroring
+        :meth:`set_gripper_position`) or a sequence matching the underlying
+        gripper joint order.
+        """
+        if not self._gripper_joint_indices:
+            raise NotImplementedError(
+                "Gripper control is not available in this simulation (no gripper joints found in the URDF)."
+            )
+        if isinstance(angles, (int, float)):
+            self.set_gripper_position(float(angles))
+            return
+        targets = list(angles)
+        if len(targets) == 1:
+            self.set_gripper_position(targets[0])
+            return
+        if len(targets) != len(self._gripper_joint_indices):
+            raise ValueError(f"Expected {len(self._gripper_joint_indices)} gripper targets, got {len(targets)}")
+        desired: dict[int, float] = {}
+        for idx, target in zip(self._gripper_joint_indices, targets):
+            lo, hi = self._gripper_limits.get(idx, (-math.inf, math.inf))
+            clamped = float(target)
+            if math.isfinite(lo):
+                clamped = max(lo, clamped)
+            if math.isfinite(hi):
+                clamped = min(hi, clamped)
+            desired[idx] = clamped
+        rep_angle = self._representative_gripper_angle(desired)
+        self._gripper_motion_state = self.env.record_gripper_command(rep_angle)
+        self._apply_gripper_targets(desired)
 
     def set_gripper_position(self, angle: float) -> None:
         """Drive the gripper symmetrically using a single angle target."""
@@ -197,11 +234,33 @@ class SimQArm(QArmBase):
                 targets[idx] = angle
         return targets
 
+    def _representative_gripper_angle(self, targets: dict[int, float]) -> float:
+        """
+        Derive a single angle from per-joint targets for motion state tracking.
+
+        Prefer GRIPPER_JOINT2A (closing is positive). Fall back to the mirrored
+        1A target if present, otherwise average the provided values.
+        """
+        if not targets:
+            return 0.0
+        try:
+            name_map = {idx: self.env.joint_names[idx].upper() for idx in targets}
+        except Exception:
+            name_map = {}
+        for idx, name in name_map.items():
+            if name == "GRIPPER_JOINT2A":
+                return float(targets[idx])
+        for idx, name in name_map.items():
+            if name == "GRIPPER_JOINT1A":
+                return float(-targets[idx])
+        return float(sum(targets.values()) / len(targets))
+
     def _apply_gripper_targets(self, desired: dict[int, float]) -> None:
-        targets = self.env.get_joint_positions()  # includes gripper joints
+        targets = list(self._last_full_targets) if self._last_full_targets is not None else self.env.get_joint_positions()
         for joint_idx, target_value in desired.items():
             pos = self._env_index_to_pos[joint_idx]
             targets[pos] = target_value
+        self._last_full_targets = list(targets)
         self.env.set_joint_positions(targets)
         self._maybe_step()
 

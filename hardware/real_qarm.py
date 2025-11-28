@@ -39,6 +39,9 @@ class RealQArm(QArmBase):
     def set_gripper_position(self, angle: float) -> None:
         self._not_ready("set_gripper_position")
 
+    def set_gripper_positions(self, angles: Sequence[float]) -> None:
+        self._not_ready("set_gripper_positions")
+
     def open_gripper(self) -> None:
         self._not_ready("open_gripper")
 

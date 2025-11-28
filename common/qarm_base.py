@@ -58,6 +58,16 @@ class QArmBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def set_gripper_positions(self, angles: Sequence[float]) -> None:
+        """
+        Command the gripper using explicit per-joint targets.
+
+        Implementations should clamp to safe limits and map these values to the
+        underlying gripper joints in a consistent, documented order.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def open_gripper(self) -> None:
         """Open the gripper."""
         raise NotImplementedError
