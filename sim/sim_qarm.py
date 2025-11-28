@@ -8,6 +8,7 @@ the default is headless to avoid clashing with Panda3D.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Sequence
 
 try:
@@ -52,7 +53,9 @@ class SimQArm(QArmBase):
         self._env_index_to_pos: dict[int, int] = {
             idx: i for i, idx in enumerate(self.env.movable_joint_indices)
         }
-        self._gripper_joint_indices = self._detect_gripper_joints()
+        self._gripper_joint_indices = (
+            list(getattr(self.env, "_gripper_control_indices", [])) or self._detect_gripper_joints()
+        )
         self._arm_joint_indices: list[int] = [
             idx for idx in self.env.movable_joint_indices if idx not in self._gripper_joint_indices
         ]
@@ -64,6 +67,10 @@ class SimQArm(QArmBase):
         self._home_pose = self._validate_home_pose(home_pose)
         self._auto_step = bool(auto_step)
         self._gripper_limits = self._query_gripper_limits()
+        self._gripper_angle_limits = self._compute_gripper_angle_limits()
+        self._open_angle = 0.0
+        self._closed_angle = min(0.55, self._gripper_angle_limits[1])
+        self._gripper_motion_state: str = "idle"
 
     def home(self) -> None:
         """Reset the arm to its configured home pose."""
@@ -94,12 +101,23 @@ class SimQArm(QArmBase):
         return self.env.get_joint_positions(self.joint_order)
 
     def open_gripper(self) -> None:
-        """Open the gripper if the current URDF exposes gripper joints."""
-        self._set_gripper(open_state=True)
+        """Open the gripper to the default open angle."""
+        self.set_gripper_position(self._open_angle)
 
     def close_gripper(self) -> None:
-        """Close the gripper if the current URDF exposes gripper joints."""
-        self._set_gripper(open_state=False)
+        """Close the gripper to the default closed angle."""
+        self.set_gripper_position(self._closed_angle)
+
+    def set_gripper_position(self, angle: float) -> None:
+        """Drive the gripper symmetrically using a single angle target."""
+        if not self._gripper_joint_indices:
+            raise NotImplementedError(
+                "Gripper control is not available in this simulation (no gripper joints found in the URDF)."
+            )
+        clamped = self._clamp_gripper_angle(angle)
+        self._gripper_motion_state = self.env.record_gripper_command(clamped)
+        targets = self._gripper_targets_for_angle(clamped)
+        self._apply_gripper_targets(targets)
 
     def move_ee_to(self, target_pos: Sequence[float]) -> None:  # pragma: no cover - placeholder for student IK
         """
@@ -143,35 +161,49 @@ class SimQArm(QArmBase):
             limits[idx] = (lower, upper)
         return limits
 
-    def _set_gripper(self, *, open_state: bool) -> None:
-        if not self._gripper_joint_indices:
-            raise NotImplementedError(
-                "Gripper control is not available in this simulation (no gripper joints found in the URDF)."
-            )
-        targets = self.env.get_joint_positions()  # full list (arm + gripper)
-        desired = self._gripper_targets(open_state=open_state)
+    def _compute_gripper_angle_limits(self) -> tuple[float, float]:
+        """Derive a safe symmetric range for the single gripper angle."""
+        lower_bound = -math.inf
+        upper_bound = math.inf
+        for idx, (j_lower, j_upper) in self._gripper_limits.items():
+            name = self.env.joint_names[idx].upper()
+            if name == "GRIPPER_JOINT1A":
+                lower_bound = max(lower_bound, -j_upper)
+                upper_bound = min(upper_bound, -j_lower)
+            elif name == "GRIPPER_JOINT2A":
+                lower_bound = max(lower_bound, j_lower)
+                upper_bound = min(upper_bound, j_upper)
+        if not math.isfinite(lower_bound) or not math.isfinite(upper_bound) or lower_bound >= upper_bound:
+            lower_bound, upper_bound = -1.0, 1.0
+        # Keep within a reasonable travel to avoid unrealistic extremes.
+        lower_bound = max(lower_bound, -1.2)
+        upper_bound = min(upper_bound, 1.2)
+        return (lower_bound, upper_bound)
+
+    def _clamp_gripper_angle(self, angle: float) -> float:
+        lo, hi = self._gripper_angle_limits
+        return max(lo, min(hi, float(angle)))
+
+    def _gripper_targets_for_angle(self, angle: float) -> dict[int, float]:
+        """Map a scalar gripper angle to per-joint targets."""
+        targets: dict[int, float] = {}
+        for idx in self._gripper_joint_indices:
+            name = self.env.joint_names[idx].upper()
+            if name == "GRIPPER_JOINT1A":
+                targets[idx] = -angle
+            elif name == "GRIPPER_JOINT2A":
+                targets[idx] = angle
+            else:
+                targets[idx] = angle
+        return targets
+
+    def _apply_gripper_targets(self, desired: dict[int, float]) -> None:
+        targets = self.env.get_joint_positions()  # includes gripper joints
         for joint_idx, target_value in desired.items():
             pos = self._env_index_to_pos[joint_idx]
             targets[pos] = target_value
         self.env.set_joint_positions(targets)
         self._maybe_step()
-
-    def _gripper_targets(self, *, open_state: bool) -> dict[int, float]:
-        """Compute per-joint targets for opening/closing the gripper."""
-        targets: dict[int, float] = {}
-        for idx in self._gripper_joint_indices:
-            name = self.env.joint_names[idx].upper()
-            if name == "GRIPPER_JOINT1A":
-                targets[idx] = 0.0 if open_state else -0.5
-            elif name == "GRIPPER_JOINT2A":
-                targets[idx] = 0.0 if open_state else 0.5
-            else:
-                lower, upper = self._gripper_limits.get(idx, (0.0, 0.0))
-                if upper > lower:
-                    targets[idx] = upper if open_state else lower
-                else:
-                    targets[idx] = 0.04 if open_state else 0.0
-        return targets
 
     def _maybe_step(self) -> None:
         """Advance the sim if we're not running PyBullet in real-time mode."""

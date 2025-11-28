@@ -36,6 +36,9 @@ class RealQArm(QArmBase):
     def get_joint_positions(self) -> list[float]:
         self._not_ready("get_joint_positions")
 
+    def set_gripper_position(self, angle: float) -> None:
+        self._not_ready("set_gripper_position")
+
     def open_gripper(self) -> None:
         self._not_ready("open_gripper")
 

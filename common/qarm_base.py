@@ -48,6 +48,16 @@ class QArmBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def set_gripper_position(self, angle: float) -> None:
+        """
+        Command the gripper to a target angle (radians).
+
+        Implementations decide how this maps to individual gripper joints but
+        should treat a single scalar target as the user-facing control.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def open_gripper(self) -> None:
         """Open the gripper."""
         raise NotImplementedError

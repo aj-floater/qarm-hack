@@ -44,6 +44,8 @@ JOYSTICK_AXES = {"left_x": 0, "left_y": 1, "right_x": 2, "right_y": 3}
 JOYSTICK_BUTTONS = {"left_bumper": 9, "right_bumper": 10}
 GAMEPAD_DEADZONE = 0.1
 JOINT_SPEEDS = {"yaw": 1.4, "shoulder": 1.0, "elbow": 1.2, "wrist": 1.0}
+GRIPPER_OPEN_ANGLE = 0.0
+GRIPPER_CLOSED_ANGLE = 0.55
 GRIPPER_LOCKS = {"GRIPPER_JOINT1B": 0.8, "GRIPPER_JOINT2B": -0.8}
 
 def clamp(val: float, bounds: tuple[float, float]) -> float:
@@ -141,6 +143,7 @@ def teleop_loop(arm: QArmBase, stop_event: threading.Event) -> None:
         return
     print("[GamepadHoops] Left stick yaw/shoulder, right stick elbow/wrist, bumpers open/close gripper.")
     limits = [(-math.pi, math.pi)] * 4
+    grip_target = GRIPPER_OPEN_ANGLE
     while not stop_event.is_set():
         lx, ly, rx, ry, buttons = pad.read()
         q = arm.get_joint_positions()
@@ -152,9 +155,11 @@ def teleop_loop(arm: QArmBase, stop_event: threading.Event) -> None:
         try:
             arm.set_joint_positions(q)
             if buttons.get("left_bumper") and not buttons.get("right_bumper"):
-                arm.close_gripper()
+                grip_target = GRIPPER_CLOSED_ANGLE
+                arm.set_gripper_position(grip_target)
             elif buttons.get("right_bumper") and not buttons.get("left_bumper"):
-                arm.open_gripper()
+                grip_target = GRIPPER_OPEN_ANGLE
+                arm.set_gripper_position(grip_target)
         except Exception as exc:
             print(f"[GamepadHoops] Failed to send commands: {exc}")
             stop_event.set()
