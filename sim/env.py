@@ -264,13 +264,19 @@ class QArmSimEnv:
             for joint_id, angle in zip(self.movable_joint_indices, target):
                 p.resetJointState(self.robot_id, joint_id, angle, physicsClientId=self.client)
 
-    def step(self, n: int = 1) -> None:
-        """Advance the simulation by n steps (no-op if running in real-time mode)."""
+    def step(self, n: int = 1, dt: float | None = None) -> None:
+        """Advance the simulation by n steps (no-op if running in real-time mode).
+
+        If dt is provided, it is split across the steps and passed to contact/grasp
+        helpers so timing stays in wall-clock seconds even if render FPS varies.
+        """
         if self.real_time:
             return
-        for _ in range(n):
+        n_steps = max(1, int(n))
+        dt_per_step = self.time_step if dt is None else float(dt) / n_steps
+        for _ in range(n_steps):
             p.stepSimulation(physicsClientId=self.client)
-            self._update_hoop_grasp(self.time_step)
+            self._update_hoop_grasp(dt_per_step)
 
     def set_joint_positions(self, q: Sequence[float], max_force: float = 5.0) -> None:
         """

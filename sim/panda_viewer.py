@@ -110,6 +110,7 @@ class PhysicsBridge:
             if reset:
                 self.env.reset()
 
+        self.time_step = float(getattr(self.env, "time_step", time_step))
         self.base_mesh_scale = self.base_assets.visual_scale
         self.base_collision_mesh_scale = self.base_assets.collision_scale
         self.client = self.env.client
@@ -206,8 +207,8 @@ class PhysicsBridge:
             )
         p.removeBody(probe, physicsClientId=self.client)
 
-    def step(self) -> None:
-        self.env.step()
+    def step(self, n: int = 1, dt: float | None = None) -> None:
+        self.env.step(n, dt=dt)
 
     def home(self) -> None:
         self.env.reset()
@@ -335,7 +336,7 @@ class PandaArmViewer(ShowBase):
         self.render2d.setAntialias(AntialiasAttrib.MMultisample)
         self.physics = physics
         self.paused = False
-        self.time_step = args.time_step
+        self.time_step = getattr(self.physics, "time_step", args.time_step)
         self.base_assets = getattr(self.physics, "base_assets", DEFAULT_BASE_ASSETS)
         self.base_mesh_path = self.base_assets.visual_mesh
         self.green_accent_path = self.base_assets.green_accent_mesh
@@ -746,7 +747,7 @@ class PandaArmViewer(ShowBase):
 
     def _update_task(self, task):
         if not self.paused:
-            self.physics.step()
+            self.physics.step(dt=task.dt)
         self._sync_models()
         self._sync_point_labels()
         self._update_hoop_labels()
