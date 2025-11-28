@@ -19,7 +19,7 @@ from common.qarm_base import QArmBase
 from demos._shared import run_with_viewer
 
 # ---- user settings ----
-MODE = "sim"  # change to "hardware" to drive the real arm
+MODE = "hardware"  # change to "hardware" to drive the real arm
 MIRROR_SIM_WHEN_HARDWARE = True  # keep the simulation/viewer running alongside hardware
 USE_PANDA_VIEWER = True
 USE_PYBULLET_GUI = False
