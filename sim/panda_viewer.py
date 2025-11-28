@@ -48,7 +48,7 @@ try:
 except ImportError as exc:  # pragma: no cover - runtime guard
     raise SystemExit("Panda3D is not installed. Try `pip install panda3d`.") from exc
 
-from sim.env import KinematicObject, QArmSimEnv
+from sim.env import KinematicObject, PointLabel, QArmSimEnv
 from sim.assets import BaseMeshAssets, DEFAULT_BASE_ASSETS
 
 WINDOW_TITLE = "QArm Panda3D Visualizer"
@@ -117,6 +117,9 @@ class PhysicsBridge:
         self.link_name_to_index = dict(self.env.link_name_to_index)
         self.kinematic_objects: List[KinematicObject] = (
             self.env.list_kinematic_objects() if hasattr(self.env, "list_kinematic_objects") else []
+        )
+        self.point_labels: List[PointLabel] = (
+            self.env.list_point_labels() if hasattr(self.env, "list_point_labels") else []
         )
         self.kinematic_body_nodes: List[Tuple[int, NodePath]] = []
         self.active_grasp_cid: int | None = None
@@ -235,6 +238,15 @@ class PhysicsBridge:
             except Exception:
                 return None
         return None
+
+    def get_point_labels(self) -> List[PointLabel]:
+        """Expose user-defined point labels from the environment, if any."""
+        if hasattr(self.env, "list_point_labels"):
+            try:
+                return list(self.env.list_point_labels())
+            except Exception:
+                return []
+        return []
 
     def _link_pose(self, body_id: int, link_idx: int) -> Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]:
         if link_idx == -1:
@@ -356,6 +368,7 @@ class PandaArmViewer(ShowBase):
         self.link_nodes: Dict[str, NodePath] = {}
         self.kinematic_nodes: List[NodePath] = []
         self.kinematic_body_nodes: List[Tuple[int, NodePath]] = []
+        self.point_label_nodes: Dict[int, Tuple[NodePath, TextNode, NodePath]] = {}
         self.joint_sliders: List[DirectSlider] = []
         self.locked_sliders: List[Tuple[int, DirectSlider]] = []
         self.joint_labels: List[Tuple["DirectLabel", int]] = []
@@ -369,6 +382,7 @@ class PandaArmViewer(ShowBase):
         self._setup_scene()
         self._setup_static_meshes()
         self._setup_kinematic_objects()
+        self._setup_point_labels()
         self._setup_models()
         self._setup_lock_status()
         if self.show_sliders:
@@ -730,6 +744,7 @@ class PandaArmViewer(ShowBase):
         if not self.paused:
             self.physics.step()
         self._sync_models()
+        self._sync_point_labels()
         self._update_lock_status()
         if self.show_sliders:
             self._update_joint_labels()
@@ -754,6 +769,28 @@ class PandaArmViewer(ShowBase):
                 continue
             node.setPos(pos[0], pos[1], pos[2])
             node.setQuat(LQuaternionf(orn[3], orn[0], orn[1], orn[2]))
+
+    def _sync_point_labels(self) -> None:
+        """Create/update/remove point label nodes to mirror the env list."""
+        try:
+            labels = self.physics.get_point_labels()
+        except Exception:
+            labels = []
+        seen: set[int] = set()
+        for label in labels:
+            seen.add(label.label_id)
+            self._ensure_point_label_node(label)
+        # Remove stale labels that no longer exist in the env.
+        for label_id in list(self.point_label_nodes.keys()):
+            if label_id in seen:
+                continue
+            try:
+                root, _, marker = self.point_label_nodes[label_id]
+                marker.removeNode()
+                root.removeNode()
+            except Exception:
+                pass
+            self.point_label_nodes.pop(label_id, None)
 
     def _update_camera(self) -> None:
         cam_pos = self._spherical_to_cartesian(self.cam_distance, math.radians(self.cam_yaw), math.radians(self.cam_pitch))
@@ -932,6 +969,69 @@ class PandaArmViewer(ShowBase):
                 node.setMaterial(mat, 1)
             self.kinematic_nodes.append(node)
             self.kinematic_body_nodes.append((obj.body_id, node))
+
+    def _setup_point_labels(self) -> None:
+        """Create any user-provided point labels from the physics backend."""
+        try:
+            labels = self.physics.get_point_labels()
+        except Exception:
+            labels = []
+        for label in labels:
+            self._ensure_point_label_node(label)
+
+    def _ensure_point_label_node(self, label: PointLabel) -> None:
+        entry = self.point_label_nodes.get(label.label_id)
+        if entry is None:
+            root = self.render.attachNewNode(f"label-{label.label_id}")
+            root.setLightOff()
+            root.setTransparency(TransparencyAttrib.MAlpha)
+            marker = self._create_label_marker(label.color_rgba)
+            marker.reparentTo(root)
+            txt_node = TextNode(f"label-text-{label.label_id}")
+            txt_node.setAlign(TextNode.ALeft)
+            txt_node.setTextColor(Vec4(*label.color_rgba))
+            text_np = root.attachNewNode(txt_node)
+            text_np.setBillboardPointEye()
+            text_np.setScale(label.text_scale)
+            # Keep the label tight to the crosshair: small horizontal/vertical offset.
+            text_np.setPos(label.text_scale * 0.35, 0, label.text_scale * 0.65 + 0.005)
+            text_np.setColor(Vec4(*label.color_rgba))
+            text_np.setTransparency(TransparencyAttrib.MAlpha)
+            self.point_label_nodes[label.label_id] = (root, txt_node, marker)
+        root, txt_node, marker = self.point_label_nodes[label.label_id]
+        color = Vec4(*label.color_rgba)
+        txt_node.setText(self._format_label_text(label))
+        txt_node.setTextColor(color)
+        marker.setColor(color)
+        marker.setScale(max(0.005, label.marker_scale))
+        root.setPos(label.position[0], label.position[1], label.position[2])
+
+    def _create_label_marker(self, color_rgba: tuple[float, float, float, float]) -> NodePath:
+        """Crosshair marker; scale is applied per-label in _ensure_point_label_node."""
+        half = 1.0
+        ls = LineSegs()
+        ls.setThickness(4.5)
+        ls.setColor(*color_rgba)
+        axes = [
+            (Vec3(-half, 0, 0), Vec3(half, 0, 0)),
+            (Vec3(0, -half, 0), Vec3(0, half, 0)),
+            (Vec3(0, 0, -half * 0.35), Vec3(0, 0, half * 1.4)),
+        ]
+        for start, end in axes:
+            ls.moveTo(start)
+            ls.drawTo(end)
+        node = ls.create()
+        marker = NodePath(node)
+        marker.setTransparency(TransparencyAttrib.MAlpha)
+        marker.setDepthOffset(4)
+        marker.setLightOff()
+        return marker
+
+    def _format_label_text(self, label: PointLabel) -> str:
+        if label.show_coords:
+            x, y, z = label.position
+            return f"{label.name} ({x:+.3f}, {y:+.3f}, {z:+.3f})"
+        return label.name
 
     def _load_mesh(self, path: Path) -> NodePath:
         try:

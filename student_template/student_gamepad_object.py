@@ -35,6 +35,17 @@ STEP_S = 0.02
 
 # Preload multiple hoops (rings) so you have several to pick/place.
 KINEMATIC_OBJECTS: list[dict[str, object]] = []
+# Label key spots in the Panda3D viewport (name + coordinates + color).
+POINT_LABELS: list[dict[str, object]] = [
+    {
+        "name": "Drop zone A",
+        "position": (0.25, -0.15, 0.06),
+        "color": (0.95, 0.2, 0.1, 1.0),
+        "text_scale": 0.025,
+        "marker_scale": 0.06,
+        "show_coords": True,
+    }
+]
 HOOP_SEGMENT = MODEL_DIR / "hoop-segment.stl"
 HOOP_COLLISION_SEGMENTS = {
     "mesh_path": HOOP_SEGMENT,
@@ -446,6 +457,30 @@ def add_kinematic_objects(arm: QArmBase, objects: list[dict[str, object]]) -> No
         print(f"[Student] Added kinematic mesh {obj['mesh_path']} (body_id={body_id})")
 
 
+def add_point_labels(arm: QArmBase, labels: list[dict[str, object]]) -> None:
+    """
+    Convenience wrapper to register labeled points for the Panda3D viewer.
+    Pass a list of dicts shaped like POINT_LABELS above.
+    """
+    if not labels:
+        return
+    env = getattr(arm, "env", None)
+    if env is None or not hasattr(env, "add_point_label"):
+        print("[Student] Current QArm backend does not support point labels.")
+        return
+    for i, label in enumerate(labels):
+        name = str(label.get("name", f"Label {i+1}"))
+        label_id = env.add_point_label(
+            name=name,
+            position=label.get("position", (0.0, 0.0, 0.0)),
+            color=label.get("color", label.get("rgba")),
+            text_scale=label.get("text_scale", 0.025),
+            marker_scale=label.get("marker_scale", 0.1),
+            show_coords=label.get("show_coords", True),
+        )
+        print(f"[Student] Added point label '{name}' (id={label_id})")
+
+
 def main() -> None:
     use_panda_viewer = USE_PANDA_VIEWER
     use_pybullet_gui = USE_PYBULLET_GUI
@@ -457,6 +492,7 @@ def main() -> None:
     arm = make_qarm(mode="sim", gui=use_pybullet_gui, real_time=real_time, auto_step=auto_step)
     arm.home()
     add_kinematic_objects(arm, KINEMATIC_OBJECTS)
+    add_point_labels(arm, POINT_LABELS)
     time.sleep(0.1)
 
     stop_event = threading.Event()

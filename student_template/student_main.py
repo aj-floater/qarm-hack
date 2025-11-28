@@ -49,6 +49,17 @@ RELOAD_MESHES = False
 #     "mass": 0.1,  # optional: set >0 to let gravity act on the mesh
 # }
 KINEMATIC_OBJECTS: list[dict[str, object]] = []
+# Add labeled points to the Panda3D viewport (name + coordinates with a color).
+# Example shape of an entry:
+# {
+#     "name": "Drop target",
+#     "position": (0.25, -0.15, 0.06),
+#     "color": (0.95, 0.6, 0.1, 1.0),  # RGB or RGBA
+#     "text_scale": 0.025,  # optional text scale (default 0.025)
+#     "marker_scale": 0.1,   # optional crosshair scale (default 0.1)
+#     "show_coords": True,  # include "(x, y, z)" in the label text
+# }
+POINT_LABELS: list[dict[str, object]] = []
 
 # Controller + teleop defaults.
 USE_GAMEPAD_CONTROL = True
@@ -417,6 +428,30 @@ def add_kinematic_objects(arm: QArmBase, objects: list[dict[str, object]]) -> No
         print(f"[Student] Added kinematic mesh {obj['mesh_path']} (body_id={body_id})")
 
 
+def add_point_labels(arm: QArmBase, labels: list[dict[str, object]]) -> None:
+    """
+    Convenience wrapper to register labeled points for the Panda3D viewer.
+    Pass a list of dicts shaped like the POINT_LABELS example above.
+    """
+    if not labels:
+        return
+    env = getattr(arm, "env", None)
+    if env is None or not hasattr(env, "add_point_label"):
+        print("[Student] Current QArm backend does not support point labels.")
+        return
+    for i, label in enumerate(labels):
+        name = str(label.get("name", f"Label {i+1}"))
+        label_id = env.add_point_label(
+            name=name,
+            position=label.get("position", (0.0, 0.0, 0.0)),
+            color=label.get("color", label.get("rgba")),
+            text_scale=label.get("text_scale", 0.025),
+            marker_scale=label.get("marker_scale", 0.1),
+            show_coords=label.get("show_coords", True),
+        )
+        print(f"[Student] Added point label '{name}' (id={label_id})")
+
+
 def demo_motion(arm: QArmBase, duration: float, step_s: float, stop_event: threading.Event | None = None) -> None:
     """
     Walk through a repeating set of waypoints in joint space.
@@ -465,6 +500,7 @@ def main() -> None:
     arm = make_qarm(mode="sim", gui=use_pybullet_gui, real_time=real_time, auto_step=auto_step)
     arm.home()
     add_kinematic_objects(arm, KINEMATIC_OBJECTS)
+    add_point_labels(arm, POINT_LABELS)
     time.sleep(0.1)
 
     # -------- Viewer wiring (optional) --------

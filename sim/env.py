@@ -41,6 +41,19 @@ class KinematicObject:
     rgba: tuple[float, float, float, float] | None
 
 
+@dataclass
+class PointLabel:
+    """Metadata for a user-defined point annotation in the scene."""
+
+    label_id: int
+    name: str
+    position: tuple[float, float, float]
+    color_rgba: tuple[float, float, float, float]
+    text_scale: float
+    marker_scale: float
+    show_coords: bool
+
+
 class QArmSimEnv:
     """
     Container for PyBullet state and helper utilities.
@@ -112,6 +125,8 @@ class QArmSimEnv:
         self.locked_joint_indices: list[int] = []
         self._locked_slider_ids: dict[int, int] = {}
         self.kinematic_objects: list[KinematicObject] = []
+        self.point_labels: list[PointLabel] = []
+        self._point_label_counter: int = 0
         # Grasp/locking helpers
         self._gripper_b_links: list[int] = []
         self._gripper_control_indices: list[int] = []
@@ -579,12 +594,6 @@ class QArmSimEnv:
         mesh segments (e.g., a hoop made of convex slices arranged in a ring).
         """
 
-        def _coerce_xyz(values: Sequence[float]) -> list[float]:
-            coords = list(values)
-            if len(coords) != 3:
-                raise ValueError(f"Expected a length-3 position, got {coords}")
-            return [float(v) for v in coords]
-
         mesh = Path(mesh_path).expanduser()
         if not mesh.exists():
             raise FileNotFoundError(f"Kinematic mesh not found: {mesh}")
@@ -595,7 +604,7 @@ class QArmSimEnv:
             if not collision_mesh.exists():
                 raise FileNotFoundError(f"Collision mesh not found: {collision_mesh}")
 
-        pos_xyz = _coerce_xyz(position)
+        pos_xyz = self._coerce_xyz(position)
         scale_vec = self._as_vec3(scale)
         collision_scale_vec = self._as_vec3(collision_scale) if collision_scale is not None else scale_vec
 
@@ -782,6 +791,49 @@ class QArmSimEnv:
         """Return a shallow copy of the currently spawned kinematic meshes."""
         return list(self.kinematic_objects)
 
+    # ---------- Point labels (for Panda3D annotations) ----------
+    def add_point_label(
+        self,
+        name: str,
+        position: Sequence[float],
+        *,
+        color: Sequence[float] | None = None,
+        text_scale: float = 0.025,
+        marker_scale: float = 0.1,
+        show_coords: bool = True,
+    ) -> int:
+        """
+        Store a labeled 3D point for visualization in the Panda3D viewer.
+
+        Returns a unique label id that can be used to identify/remove it later.
+        `text_scale` controls the rendered text size; `marker_scale` controls the
+        crosshair size. Defaults keep labels small and unobtrusive.
+        """
+        pos_xyz = self._coerce_xyz(position)
+        rgba = self._coerce_rgba(color, default=(0.9, 0.2, 0.2, 1.0))
+        label_id = self._point_label_counter
+        self._point_label_counter += 1
+        label = PointLabel(
+            label_id=label_id,
+            name=str(name),
+            position=tuple(pos_xyz),
+            color_rgba=rgba,
+            text_scale=max(0.001, float(text_scale)),
+            marker_scale=max(0.001, float(marker_scale)),
+            show_coords=bool(show_coords),
+        )
+        self.point_labels.append(label)
+        return label_id
+
+    def clear_point_labels(self) -> None:
+        """Remove all stored point labels."""
+        self.point_labels.clear()
+        self._point_label_counter = 0
+
+    def list_point_labels(self) -> list[PointLabel]:
+        """Return a shallow copy of stored point labels."""
+        return list(self.point_labels)
+
     def _lock_joint_by_name(self, names: set[str]) -> None:
         """Record the current position of any movable joints whose names appear in `names`."""
         if not names or self.robot_id is None:
@@ -858,6 +910,26 @@ class QArmSimEnv:
         if len(values) != 3:
             raise ValueError(f"Mesh scale must be a scalar or length-3 sequence, got {values}")
         return [float(v) for v in values]
+
+    @staticmethod
+    def _coerce_xyz(values: Sequence[float]) -> list[float]:
+        """Ensure a length-3 position tuple."""
+        coords = list(values)
+        if len(coords) != 3:
+            raise ValueError(f"Expected a length-3 position, got {coords}")
+        return [float(v) for v in coords]
+
+    @staticmethod
+    def _coerce_rgba(values: Sequence[float] | None, default: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+        """Normalize RGB/RGBA input to a 4-tuple."""
+        if values is None:
+            return default
+        color_vals = list(values)
+        if len(color_vals) == 3:
+            color_vals.append(1.0)
+        if len(color_vals) != 4:
+            raise ValueError(f"RGBA must have 3 or 4 values, got {color_vals}")
+        return tuple(float(v) for v in color_vals)
 
     # ---------- Hoop grasp/lock helpers ----------
     def _release_hoop_constraint(self) -> None:
