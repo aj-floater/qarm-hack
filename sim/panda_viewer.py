@@ -344,6 +344,7 @@ class PandaArmViewer(ShowBase):
         self.show_accents = not args.hide_accents
         self.show_sliders = getattr(args, "show_sliders", False)
         self.reload_meshes = getattr(args, "reload_meshes", False)
+        self.show_hoop_labels = getattr(args, "show_hoop_labels", False)
         self.base_yaw_deg = self.base_assets.yaw_deg
         self.base_mesh_scale = self.base_assets.visual_scale
         self.idx_to_name: Dict[int, str] = {idx: name for name, idx in self.physics.link_name_to_index.items()}
@@ -369,6 +370,9 @@ class PandaArmViewer(ShowBase):
         self.kinematic_nodes: List[NodePath] = []
         self.kinematic_body_nodes: List[Tuple[int, NodePath]] = []
         self.point_label_nodes: Dict[int, Tuple[NodePath, TextNode, NodePath]] = {}
+        self.hoop_label_nodes: Dict[int, Tuple[NodePath, TextNode, NodePath]] = {}
+        self.hoop_names: Dict[int, str] = {}
+        self._hoop_label_counter = 0
         self.joint_sliders: List[DirectSlider] = []
         self.locked_sliders: List[Tuple[int, DirectSlider]] = []
         self.joint_labels: List[Tuple["DirectLabel", int]] = []
@@ -745,6 +749,7 @@ class PandaArmViewer(ShowBase):
             self.physics.step()
         self._sync_models()
         self._sync_point_labels()
+        self._update_hoop_labels()
         self._update_lock_status()
         if self.show_sliders:
             self._update_joint_labels()
@@ -969,6 +974,8 @@ class PandaArmViewer(ShowBase):
                 node.setMaterial(mat, 1)
             self.kinematic_nodes.append(node)
             self.kinematic_body_nodes.append((obj.body_id, node))
+            if self.show_hoop_labels and "hoop" in obj.visual_path.name.lower():
+                self._ensure_hoop_label(obj.body_id, suggested_name=obj.visual_path.stem or "Hoop")
 
     def _setup_point_labels(self) -> None:
         """Create any user-provided point labels from the physics backend."""
@@ -978,6 +985,62 @@ class PandaArmViewer(ShowBase):
             labels = []
         for label in labels:
             self._ensure_point_label_node(label)
+
+    def _ensure_hoop_label(self, body_id: int, suggested_name: str = "Hoop") -> None:
+        """Create a label anchored to a hoop's centroid."""
+        if body_id in self.hoop_label_nodes:
+            return
+        self._hoop_label_counter += 1
+        label_name = suggested_name
+        if label_name.lower() in (n.lower() for n in self.hoop_names.values()):
+            label_name = f"{label_name} {self._hoop_label_counter}"
+        self.hoop_names[body_id] = label_name
+        root = self.render.attachNewNode(f"hoop-label-{body_id}")
+        root.setLightOff()
+        root.setTransparency(TransparencyAttrib.MAlpha)
+        marker = self._create_label_marker((1.0, 0.3, 0.3, 1.0))
+        marker.reparentTo(root)
+        txt_node = TextNode(f"hoop-text-{body_id}")
+        txt_node.setAlign(TextNode.ALeft)
+        txt_node.setTextColor(Vec4(1.0, 0.3, 0.3, 1.0))
+        text_np = root.attachNewNode(txt_node)
+        text_np.setBillboardPointEye()
+        text_np.setScale(0.022)
+        text_np.setPos(0.012, 0, 0.028)
+        text_np.setColor(Vec4(1.0, 0.3, 0.3, 1.0))
+        text_np.setTransparency(TransparencyAttrib.MAlpha)
+        self.hoop_label_nodes[body_id] = (root, txt_node, marker)
+
+    def _update_single_hoop_label(self, body_id: int, locked: bool | None = None) -> None:
+        if body_id not in self.hoop_label_nodes:
+            return
+        root, txt_node, marker = self.hoop_label_nodes[body_id]
+        try:
+            pos, _ = p.getBasePositionAndOrientation(body_id, physicsClientId=self.physics.client)
+        except Exception:
+            pos = (0.0, 0.0, 0.0)
+        root.setPos(pos[0], pos[1], pos[2])
+        name = self.hoop_names.get(body_id, f"Hoop {body_id}")
+        txt_node.setText(name)
+        if locked is None:
+            info = self.physics.get_active_hoop_info()
+            locked_id = info.get("hoop_body_id") if info else None
+            locked = body_id == locked_id
+        color = Vec4(0.35, 1.0, 0.4, 1.0) if locked else Vec4(1.0, 0.35, 0.35, 1.0)
+        txt_node.setTextColor(color)
+        marker.setColor(color)
+        marker.setColorScale(color)
+        marker.setScale(0.08)
+
+    def _update_hoop_labels(self) -> None:
+        if not self.show_hoop_labels or not self.hoop_label_nodes:
+            return
+        locked_id = None
+        info = self.physics.get_active_hoop_info()
+        if info:
+            locked_id = info.get("hoop_body_id")
+        for hoop_id in list(self.hoop_label_nodes.keys()):
+            self._update_single_hoop_label(hoop_id, locked=hoop_id == locked_id)
 
     def _ensure_point_label_node(self, label: PointLabel) -> None:
         entry = self.point_label_nodes.get(label.label_id)
@@ -1217,6 +1280,11 @@ def parse_args() -> argparse.Namespace:
         "--reload-meshes",
         action="store_true",
         help="Force Panda3D to reload STL meshes (bypass cache) for live mesh edits.",
+    )
+    parser.add_argument(
+        "--show-hoop-labels",
+        action="store_true",
+        help="Show centroid labels on hoops (tint green when locked).",
     )
     return parser.parse_args()
 
