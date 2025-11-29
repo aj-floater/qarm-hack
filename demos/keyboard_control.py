@@ -21,7 +21,7 @@ from api.factory import make_qarm
 from common.qarm_base import DEFAULT_JOINT_ORDER, QArmBase
 from demos._shared import run_with_viewer
 
-MODE = "sim"
+MODE = "mirror"
 USE_PANDA_VIEWER = True
 USE_PYBULLET_GUI = False
 DELTA_RAD = 0.1  # ~5.7 degrees per tap

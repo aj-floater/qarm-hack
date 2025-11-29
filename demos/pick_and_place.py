@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from api.factory import make_qarm
 from common.qarm_base import DEFAULT_JOINT_ORDER, QArmBase
 
-MODE = "sim"
+MODE = "mirror"
 USE_MIRROR_MODE = False  # set True to drive hardware while mirroring into the simulator
 USE_PANDA_VIEWER = True
 USE_PYBULLET_GUI = False

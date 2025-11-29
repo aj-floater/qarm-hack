@@ -87,7 +87,7 @@ class SimQArm(QArmBase):
         self._last_full_targets = list(full_home)
         self._maybe_step()
 
-    def set_joint_positions(self, q: Sequence[float]) -> None:
+    def _set_joint_positions_instant(self, q: Sequence[float]) -> None:
         """
         Command the arm joints in the same order as :attr:`joint_order`.
         """

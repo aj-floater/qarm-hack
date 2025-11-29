@@ -35,6 +35,7 @@ class RealQArm(QArmBase):
         # Default to the vendor SDK QArm if no client is provided (keeps the
         # import path stable while letting tests inject a stub).
         self._current_joint_positions = [0.0, 0.0, 0.0, 0.0]
+        self._current_gripper_position = 0.0
 
         self.exitStack = ExitStack()
         register(self.exitStack.close)
@@ -51,14 +52,26 @@ class RealQArm(QArmBase):
         self.set_joint_positions([0.0, 0.0, 0.0, 0.0])
         self.set_gripper_position(0.0)
 
-    def set_joint_positions(self, joint_angles: Sequence[float]) -> None:
+    def _send_command(self, *, phi: Sequence[float] | None = None, grip: float | None = None) -> None:
+        cmd_phi = np.array(phi if phi is not None else self._current_joint_positions, dtype=np.float64)
+        grip_value = self._current_gripper_position if grip is None else float(grip)
+        kwargs: dict[str, np.ndarray | float] = {
+            "phiCMD": cmd_phi,
+            "gprCMD": grip_value,
+            "baseLED": np.array([0, 1, 0], dtype=np.float64),
+        }
+        self.arm.read_write_std(**kwargs)
+
+    def set_joint_positions(self, joint_angles: Sequence[float], *, speed: float | None = None) -> None:
         print(f"[RealQArm] set_joint_positions({joint_angles})")
-        # Only the first four joints are driven; clamp excess input to match.
+        super().set_joint_positions(joint_angles, speed=speed)
+
+    def _set_joint_positions_instant(self, joint_angles: Sequence[float]) -> None:
         phi = list(joint_angles)[:4]
         if len(phi) < 4:
             phi = phi + [0.0] * (4 - len(phi))
         self._current_joint_positions = phi
-        self.arm.read_write_std(phiCMD=np.array(phi, dtype=np.float64), baseLED=np.array([0, 1, 0], dtype=np.float64))
+        self._send_command(phi=phi)
 
     def get_joint_positions(self) -> list[float]:
         print("[RealQArm] get_joint_positions() ->", self._current_joint_positions)
@@ -66,7 +79,8 @@ class RealQArm(QArmBase):
 
     def set_gripper_position(self, closure: float) -> None:
         print(f"[RealQArm] set_gripper_position({closure})")
-        self.arm.read_write_std(gprCMD=closure, baseLED=np.array([0, 1, 0], dtype=np.float64))
+        self._current_gripper_position = float(closure)
+        self._send_command(grip=self._current_gripper_position)
 
     def set_gripper_positions(self, angles: Sequence[float] | float) -> None:
         print(f"[RealQArm] set_gripper_positions({angles})")

@@ -13,6 +13,8 @@ Conventions:
 
 from __future__ import annotations
 
+import math
+import time
 from abc import ABC, abstractmethod
 from typing import Sequence
 
@@ -24,22 +26,55 @@ class QArmBase(ABC):
     """
     Abstract base class for controlling a Quanser QArm.
 
-    This interface is intentionally joint-space oriented. Students will use
-    this API to implement their own kinematics and motion logic.
+    The public ``set_joint_positions`` method is rate-limited and blocking so
+    motion more closely matches the physical hardware. Concrete backends only
+    need to implement the instantaneous variant.
     """
+
+    DEFAULT_JOINT_SPEED = 0.8  # rad/s
+    CONTROL_STEP_S = 0.05
 
     @abstractmethod
     def home(self) -> None:
         """Move the arm to a safe 'home' configuration."""
         raise NotImplementedError
 
-    @abstractmethod
-    def set_joint_positions(self, q: Sequence[float]) -> None:
+    def set_joint_positions(self, q: Sequence[float], *, speed: float | None = None) -> None:
         """
-        Command the arm to the specified joint configuration.
+        Command the arm to the specified joint configuration, blocking until the move is complete.
 
-        q: Iterable of joint angles (radians) in a fixed, documented order.
+        speed:
+            Maximum joint speed (rad/s). When None, ``DEFAULT_JOINT_SPEED`` is used.
         """
+        targets = list(q)
+        if not targets:
+            return
+        max_speed = self.DEFAULT_JOINT_SPEED if speed is None else max(1e-6, float(speed))
+        current = self.get_joint_positions()
+        if len(current) != len(targets):
+            self._set_joint_positions_instant(targets)
+            return
+        deltas = [abs(t - c) for t, c in zip(targets, current)]
+        max_delta = max(deltas, default=0.0)
+        if max_delta == 0.0:
+            return
+        duration = max_delta / max_speed
+        steps = max(1, int(math.ceil(duration / self.CONTROL_STEP_S)))
+        dt = duration / steps if steps > 0 else 0.0
+        for step in range(1, steps + 1):
+            alpha = step / steps
+            intermediate = [c + (t - c) * alpha for c, t in zip(current, targets)]
+            self._set_joint_positions_instant(intermediate)
+            if step < steps and dt > 0.0:
+                time.sleep(dt)
+
+    def set_joint_positions_instant(self, q: Sequence[float]) -> None:
+        """Bypass rate limiting and command the joints immediately."""
+        self._set_joint_positions_instant(q)
+
+    @abstractmethod
+    def _set_joint_positions_instant(self, q: Sequence[float]) -> None:
+        """Backend-specific implementation for immediate joint commands."""
         raise NotImplementedError
 
     @abstractmethod

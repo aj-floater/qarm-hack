@@ -96,11 +96,11 @@ class QArmSimEnv:
                 f"--background_color_blue={self.BACKDROP_COLOR[2]}"
             )
         self.client = p.connect(mode, options=connect_options)
-        p.setPhysicsEngineParameter(
-            numSolverIterations=120,
-            numSubSteps=4,
-            physicsClientId=self.client,
-        )
+        # p.setPhysicsEngineParameter(
+        #     numSolverIterations=120,
+        #     numSubSteps=4,
+        #     physicsClientId=self.client,
+        # )
         self.time_step = time_step
         self.real_time = real_time
         self.gui_enabled = gui
