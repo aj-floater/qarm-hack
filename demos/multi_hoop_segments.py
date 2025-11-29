@@ -2,7 +2,8 @@
 Multi-hoop demo that reuses the hoop segment mesh for collisions.
 
 - Spreads five hoop meshes around a 68 mm diameter circle, offset outward
-  along +X by an extra 200 mm to give the arm more room.
+  along +X by an extra 200 mm to give the arm more room and a slight roll
+  tilt so gravity tips them off their edge.
 - Each hoop builds a collision ring by tiling the hoop-segment mesh
   at 29.9 degree intervals along a 68 mm diameter circle (matching the model).
 - Panda3D viewer opens by default so you can see all hoops at once.
@@ -39,6 +40,7 @@ HOOP_BASE_RADIUS_M = (RING_DIAMETER_MM / 2.0) / 1000.0
 HOOP_SPREAD_OFFSET_M = 0.2  # extend layout +200 mm along the X direction
 HOOP_RADIUS_X_M = HOOP_BASE_RADIUS_M + HOOP_SPREAD_OFFSET_M
 HOOP_RADIUS_Y_M = HOOP_BASE_RADIUS_M
+HOOP_TILT_DEG = 3.0
 COLOR_PALETTE = [
     (0.1, 0.8, 0.2, 1.0),
     (0.9, 0.4, 0.1, 1.0),
@@ -46,6 +48,14 @@ COLOR_PALETTE = [
     (0.8, 0.2, 0.8, 1.0),
     (0.9, 0.8, 0.2, 1.0),
 ]
+HOOP_MATERIAL = {
+    "lateral_friction": 0.12,
+    "rolling_friction": 0.0,
+    "spinning_friction": 0.0,
+    "restitution": 0.0,
+    "contact_stiffness": 8.0e3,
+    "contact_damping": 3.0e2,
+}
 
 
 def build_hoop_layout() -> list[dict[str, object]]:
@@ -92,16 +102,17 @@ def add_multiple_hoops(arm: QArmBase) -> None:
         env.add_kinematic_object(
             mesh_path=HOOP_MESH,
             position=spec["position"],
-            orientation_euler_deg=spec["orientation_euler_deg"],
+            orientation_euler_deg=(
+                HOOP_TILT_DEG,
+                0.0,
+                spec["orientation_euler_deg"][2],
+            ),
             scale=0.001,
             collision_segments=collision_segments(),
             mass=0.1,
             force_convex_for_dynamic=True,
             rgba=spec["rgba"],
-            lateral_friction=1.0,
-            rolling_friction=0.05,
-            spinning_friction=0.05,
-            restitution=0.0,
+            **HOOP_MATERIAL,
         )
         print(f"[MultiHoop] Spawned hoop #{idx} with collision segments.")
 
