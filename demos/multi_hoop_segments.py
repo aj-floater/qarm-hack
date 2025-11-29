@@ -1,7 +1,8 @@
 """
 Multi-hoop demo that reuses the hoop segment mesh for collisions.
 
-- Spawns ten hoop meshes arranged around a 68 mm diameter circle.
+- Spreads five hoop meshes around a 68 mm diameter circle, offset outward
+  along +X by an extra 200 mm to give the arm more room.
 - Each hoop builds a collision ring by tiling the hoop-segment mesh
   at 29.9 degree intervals along a 68 mm diameter circle (matching the model).
 - Panda3D viewer opens by default so you can see all hoops at once.
@@ -12,10 +13,10 @@ Run it:
 
 from __future__ import annotations
 
+import math
 import time
 from pathlib import Path
 from types import SimpleNamespace
-import math
 
 from api.factory import make_qarm
 from common.qarm_base import QArmBase
@@ -30,11 +31,14 @@ HOOP_MESH = MODEL_DIR / "hoop.stl"
 HOOP_SEGMENT = MODEL_DIR / "hoop-segment.stl"
 RING_DIAMETER_MM = 68.0
 SEGMENT_SPACING_DEG = 29.9
-HOOP_COUNT = 10
+HOOP_COUNT = 5
 HOOP_PLACEMENT_STEP_DEG = 29.9
 HOOP_CIRCLE_CENTER = (0.0, -0.35)
 HOOP_BASE_HEIGHT = 0.08
-HOOP_CIRCLE_RADIUS_M = (RING_DIAMETER_MM / 2.0) / 1000.0
+HOOP_BASE_RADIUS_M = (RING_DIAMETER_MM / 2.0) / 1000.0
+HOOP_SPREAD_OFFSET_M = 0.2  # extend layout +200 mm along the X direction
+HOOP_RADIUS_X_M = HOOP_BASE_RADIUS_M + HOOP_SPREAD_OFFSET_M
+HOOP_RADIUS_Y_M = HOOP_BASE_RADIUS_M
 COLOR_PALETTE = [
     (0.1, 0.8, 0.2, 1.0),
     (0.9, 0.4, 0.1, 1.0),
@@ -49,8 +53,8 @@ def build_hoop_layout() -> list[dict[str, object]]:
     for idx in range(HOOP_COUNT):
         angle_deg = idx * HOOP_PLACEMENT_STEP_DEG
         angle_rad = math.radians(angle_deg)
-        x = HOOP_CIRCLE_CENTER[0] + HOOP_CIRCLE_RADIUS_M * math.cos(angle_rad)
-        y = HOOP_CIRCLE_CENTER[1] + HOOP_CIRCLE_RADIUS_M * math.sin(angle_rad)
+        x = HOOP_CIRCLE_CENTER[0] + HOOP_RADIUS_X_M * math.cos(angle_rad)
+        y = HOOP_CIRCLE_CENTER[1] + HOOP_RADIUS_Y_M * math.sin(angle_rad)
         layout.append(
             {
                 "position": (x, y, HOOP_BASE_HEIGHT),

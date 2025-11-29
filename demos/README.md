@@ -9,7 +9,7 @@ framework files can break the shared setup.
 - `pick_and_place.py` - scripted sequence built from a small `POSES` dictionary so you can edit joint targets without touching logic; uses `set_joint_positions` directly (no IK).
 - `scene_objects.py` - drops the dog, head, and monkey meshes at preset offsets.
 - `hoop_segments.py` - spawns a single hoop that uses collision segments for a more realistic ring shape.
-- `multi_hoop_segments.py` - spawns ten hoops around a 68 mm diameter circle and builds their collision rings by tiling the hoop-segment mesh at 29.9 degree intervals.
+- `multi_hoop_segments.py` - spawns five hoops around a 68 mm diameter circle and pushes the layout +200 mm along +X while tiling the hoop-segment mesh at 29.9 degree intervals for collisions.
 - `label_demo.py` - shows how to add and animate your own point labels in the viewer.
 
 Run any demo with:
