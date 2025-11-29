@@ -7,6 +7,24 @@ You will control a QArm in simulation (and later on real hardware) by
 commanding joint angles and implementing their own kinematics and strategies
 for picking and placing coloured hoops onto stands.
 
+## Hackathon context
+
+We only have one physical arm for up to 70 students, so this kit ships with a
+bespoke simulation environment where you can run, debug, and iterate on your
+code without queueing for hardware time. The brief is to pick and place hoops
+from fixed locations on the board to their colour-matched stands. That can be
+approached in many ways, and the simulator exposes helper features including:
+
+1. Importing kinematic objects into the scene.
+2. Adding labels in the viewer (handy while debugging inverse kinematics).
+3. Accurate board geometry plus stand positions to match the real setup.
+
+The only control interface you have is direct joint-angle commands. While you
+could brute-force a sequence of angles, that is tedious and unrepresentative of
+industrial pick-and-place workflows. We strongly recommend deriving a simple
+inverse kinematics solution for this arm; it is a valuable robotics skill and
+straightforward to implement for this mechanism.
+
 ## Current status
 
 - `sim/qarm/` contains the URDF and mesh resources for the QArm.
@@ -16,126 +34,40 @@ for picking and placing coloured hoops onto stands.
 - `demos/` holds simplified student demos (quickstart, pick/place, keyboard control, gamepad hoops, scene helpers).
 - `hardware.RealQArm` remains a stub until the Quanser SDK is available.
 
-## Local setup (for devs and students)
+## Dependencies
+
+- **Windows:** install [Visual C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
+- **macOS:** install the Xcode Command Line Tools (`xcode-select --install`).
+- **Python:** use a version between 3.0 and 3.14 so both Panda3D and PyBullet supply wheels. Follow the [Python install guide](docs/python-install.md) if you need help picking an interpreter.
+- **Editor:** VSCode is strongly recommended (any similar IDE works if you already have one configured).
+
+## Environment setup
 
 ```bash
 cd /qarm-hack      # or clone destination
-python3 -m venv .venv
-source .venv/bin/activate                   # Windows: .venv\Scripts\activate
-pip install --upgrade pip
-pip install -e .                            # installs pybullet + numpy
+python -m venv .venv
+.venv\Scripts\activate                  # macOS/Linux: source .venv/bin/activate
+pip install -e .                        # installs the Python libraries for this project
 ```
 
-Quick smoke test (no GUI):
+PyBullet builds a native wheel; the first install can take a minute. **Every new shell**: reactivate the venv (`source .venv/bin/activate` or `.venv\Scripts\activate`). Using a virtual environment keeps this project's packages (PyBullet, Panda3D, etc.) isolated from your system Python so you avoid polluting other projects and everyone on your team shares the same dependency versions.
+
+## Start coding
+
+Kick off the sandbox:
 ```bash
-python - <<'PY'
-import pybullet as p
-cid = p.connect(p.DIRECT)
-robot = p.loadURDF("sim/qarm/urdf/QARM.urdf")
-print("client:", cid, "robot:", robot)
-p.disconnect()
-PY
+python -m blank_sim
 ```
+You should see the simulator window with the QArm standing on its platform. `blank_sim.py` introduces the API and viewer flow, so treat it as the jumping-off point for your own solution.
 
-- On macOS, you may need Xcode Command Line Tools once: `xcode-select --install`.
-- PyBullet builds a native wheel; it can take a minute on first install.
-- **Every new shell**: reactivate the venv (`source .venv/bin/activate`). If you forget,
-  `python/pip` will fall back to the system interpreter and you may see PEP 668 errors
-  about an "externally managed environment."
-
-## New to Python/VSCode? Start here
-
-- Install VSCode from code.visualstudio.com (Windows/macOS/Linux).
-- Install Python 3.11+:
-  - Windows: grab the installer from python.org, check "Add python.exe to PATH".
-  - macOS: `brew install python` or use the python.org installer.
-  - Ubuntu/Debian: `sudo apt-get install python3 python3-venv python3-pip`.
-- Launch VSCode and install the "Python" extension (ms-python.python). Pylance is recommended too.
-- Create/select the project venv in VSCode: `Ctrl+Shift+P` → start typing **Python: Create Environment** → select it → choose `Venv` and the Python you installed. VSCode will wire the workspace to that interpreter.
-- Open a new VSCode terminal; it should auto-activate `.venv` (or run the `source .venv/bin/activate` / `.venv\Scripts\activate` command shown above).
-- Run `pip install -e .` in that terminal to pull dependencies into the venv. If the interpreter shown in VSCode's status bar is not your venv, click it and pick the `.venv` interpreter.
-
-- **Why bother with a venv?** It keeps this project's packages (pybullet, panda3d, etc.)
-  isolated from your system Python so you don't pollute or break other projects, and you
-  get a repeatable set of dependencies that matches your teammates'.
-
-## Where to start coding
-
-Open `demos/README.md` for the menu of short demos. The quickest path is
-`demos/student_main.py`, which homes the arm, runs a few joint-space
-waypoints, and optionally opens the Panda viewer. Other demos show a scripted
-pick-and-place, keyboard nudging, and adding a hoop + labels to the scene. Keep the
-joint order `(yaw, shoulder, elbow, wrist)` when you start dropping in your own
-kinematics.
-
-**Want to see something running?**
+When you are ready to explore other behaviours, run the demos:
 ```bash
-python -m demos.student_main
+python -m demos.name_of_demo
 ```
-Run this ^ command in your terminal.
+Replace `name_of_demo` with any file under `demos/` (for example `student_main`, `pick_and_place`, or `keyboard_control`). Each script highlights different workflows and helpers you can adapt to the hackathon challenge.
 
-## Running the sims (Panda3D-first, PyBullet for debug)
+Students should only need to modify the demo scripts inside `demos/` and the `blank_sim.py` skeleton; changing other files risks breaking the shared setup and is strongly discouraged.
 
-- **Panda3D viewport (recommended for visuals):**
-  ```bash
-  python -m sim.panda_viewer
-  ```
-  (Requires `panda3d` installed; included in `pip install -e .`.)
-- **PyBullet debug sliders / GUI (useful for quick joint pokes):**
-  ```bash
-python -m sim.actual_sim --real-time
-python -m sim.run_gui --gui --real-time --sliders
-```
-- **Student demos (joint-space API):**
-  ```bash
-  python -m demos.student_main              # quickstart wave
-  python -m demos.pick_and_place            # simple scripted pick/place
-  python -m demos.keyboard_control          # manual nudges + gripper
-  python -m demos.scene_objects             # meshes in the scene
-  python -m demos.hoop_segments             # single hoop with collision segments
-  python -m demos.gamepad_multi_hoops       # gamepad teleop with multiple hoops
-  ```
-  (Edit the constants at the top of each file to change duration, viewer, or GUI toggles.)
+## VSCode launch shortcuts
 
-Base and accent meshes are now hardcoded in `sim/assets.py` (pinebase + collision and green/blue accents) with a shared 0.001 visual/collision scale, so PyBullet and Panda3D stay in sync without passing extra CLI arguments.
-
-### VSCode run/debug helpers
-
-- The repo tracks `.vscode/launch.json` so you get the launch targets on clone. The file contents:
-
-```jsonc
-{
-  // Use IntelliSense to learn about possible attributes.
-  // Hover to view descriptions of existing attributes.
-  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "name": "Student Sandbox (default)",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "demos.student_main",
-      "justMyCode": true,
-      "args": []
-    },
-    {
-      "name": "Panda Viewer (Debug)",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "sim.panda_viewer",
-      "justMyCode": true,
-      "args": []
-    },
-    {
-      "name": "PyBullet GUI (Debug)",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "sim.run_gui",
-      "justMyCode": true,
-      "args": ["--gui", "--sliders", "--real-time"]
-    }
-  ]
-}
-```
-
-- The first entry launches the beginner sandbox and is the default in VSCode. Other configs open the Panda viewer or PyBullet GUI/debug sliders. Base meshes and scales are baked into the sim (see `sim/assets.py`), so no extra mesh arguments are required.
+The workspace tracks `.vscode/launch.json`, which now lists `blank_sim` as the default run/debug target alongside quick-launch entries for each demo (`demos.pick_and_place`, `demos.scene_objects`, `demos.label_demo`, `demos.hoop_segments`). Open VSCode's Run & Debug view to select the scenario you want to run without retyping the module path every time.

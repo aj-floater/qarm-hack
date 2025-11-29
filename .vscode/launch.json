@@ -5,28 +5,44 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Student Sandbox (default)",
+      "name": "Blank Sim (default)",
       "type": "debugpy",
       "request": "launch",
-      "module": "demos.student_main",
+      "module": "blank_sim",
       "justMyCode": true,
       "args": []
     },
     {
-      "name": "Panda Viewer (Debug)",
+      "name": "Pick and Place Demo",
       "type": "debugpy",
       "request": "launch",
-      "module": "sim.panda_viewer",
+      "module": "demos.pick_and_place",
       "justMyCode": true,
       "args": []
     },
     {
-      "name": "PyBullet GUI (Debug)",
+      "name": "Scene Objects Demo",
       "type": "debugpy",
       "request": "launch",
-      "module": "sim.run_gui",
+      "module": "demos.scene_objects",
       "justMyCode": true,
-      "args": ["--gui", "--sliders", "--real-time"]
+      "args": []
+    },
+    {
+      "name": "Label Demo",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "demos.label_demo",
+      "justMyCode": true,
+      "args": []
+    },
+    {
+      "name": "Hoop Segments Demo",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "demos.hoop_segments",
+      "justMyCode": true,
+      "args": []
     }
   ]
 }
